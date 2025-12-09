@@ -342,12 +342,14 @@ class PodcastGeneratorWindow(QMainWindow):
         self.content_splitter.setChildrenCollapsible(False)
         self.content_splitter.setHandleWidth(6)
         self.workspace_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.summary_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.voice_lab_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.workspace_scroll = self._wrap_scroll_area(self.workspace_panel)
         self.summary_scroll = self._wrap_scroll_area(self.summary_panel)
         self.voice_lab_scroll = self._wrap_scroll_area(self.voice_lab_panel)
         self.control_tabs = QTabWidget()
-        self.control_tabs.setMaximumWidth(480)
         self.control_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.control_tabs.setMinimumWidth(360)
         self.control_tabs.addTab(self.summary_scroll, "🧭 Control Panel")
         self.control_tabs.addTab(self.voice_lab_scroll, "🎙️ Voice Lab")
         self.content_splitter.addWidget(self.workspace_scroll)
@@ -363,6 +365,8 @@ class PodcastGeneratorWindow(QMainWindow):
         self.main_splitter.addWidget(self.content_splitter)
         self.main_splitter.setStretchFactor(0, 0)  # Fixed width
         self.main_splitter.setStretchFactor(1, 1)  # Expandable
+        self.main_splitter.splitterMoved.connect(self._schedule_layout_save)
+        self.content_splitter.splitterMoved.connect(self._schedule_layout_save)
         # Apply saved splitter layout (falls back to safe defaults)
         self._restore_splitter_sizes()
         root_layout.addWidget(self.main_splitter, 1)
@@ -1088,23 +1092,37 @@ class PodcastGeneratorWindow(QMainWindow):
         return frame
 
     def _wrap_scroll_area(self, widget: QWidget, widget_resizable: bool = True) -> QScrollArea:
+        """
+        Wrap a widget in a scroll area with predictable vertical scrolling.
+
+        We force widget-resizable mode and an expanding container so that tall
+        content grows to its natural height and scrollbars appear as needed.
+        """
         area = SmoothScrollArea()
-        area.setWidgetResizable(widget_resizable)
-        if widget_resizable:
-            area.setWidget(widget)
-        else:
-            container = QWidget()
-            container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            layout = QVBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(0)
-            layout.addWidget(widget)
-            layout.addStretch(1)
-            area.setWidget(container)
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Ensure the inner widget is allowed to expand vertically
+        policy = widget.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Policy.Expanding)
+        widget.setSizePolicy(policy)
+
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(widget)
+        layout.addStretch(1)
+
+        area.setWidget(container)
+        area.verticalScrollBar().setSingleStep(32)
+
         min_width = widget.minimumWidth()
         if min_width > 0:
             area.setMinimumWidth(min_width)
-        area.setSizePolicy(widget.sizePolicy())
+        area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         return area
 
     def _chat_font_options(self) -> List[Dict[str, object]]:
@@ -1255,7 +1273,28 @@ class PodcastGeneratorWindow(QMainWindow):
         applied_main = _apply_sizes(self.main_splitter, getattr(self.settings, "main_splitter_sizes", None))
         applied_content = _apply_sizes(self.content_splitter, getattr(self.settings, "content_splitter_sizes", None))
 
-        if not applied_main or not applied_content:
+        def _is_invalid_content_split() -> bool:
+            if not self.content_splitter:
+                return True
+            sizes = self.content_splitter.sizes()
+            if len(sizes) < 2:
+                return True
+            left, right = sizes[0], sizes[1]
+            total = sum(sizes) or 1
+            # Only treat as invalid if clearly broken
+            return min(left, right) < 60 or total < 200
+
+        def _is_invalid_main_split() -> bool:
+            if not self.main_splitter:
+                return True
+            sizes = self.main_splitter.sizes()
+            if len(sizes) < 2:
+                return True
+            left, rest = sizes[0], sizes[1]
+            total = sum(sizes) or 1
+            return min(left, rest) < 80 or total < 250
+
+        if (not applied_main or not applied_content) or _is_invalid_content_split() or _is_invalid_main_split():
             self._apply_default_splitter_sizes()
 
         self._enforce_control_panel_bounds()
@@ -1263,15 +1302,15 @@ class PodcastGeneratorWindow(QMainWindow):
     def _apply_default_splitter_sizes(self) -> None:
         """
         Prioritize the Center Workspace.
-        Left Panel: Fixed small width (~280px).
-        Right Panel: Fixed medium width (~420px) just enough for the forms.
-        Center Panel: TAKES ALL REMAINING SPACE.
+        Left Panel: small (~250px).
+        Right Panel: medium (~400px) just enough for the forms.
+        Center Panel: takes remaining space.
         """
         total_width = self.width()
 
         # Define ideal widths for side panels
-        left_width = 300
-        right_width = 450  # Enough for "Control Panel" inputs without dead space
+        left_width = 250
+        right_width = 400  # Enough for "Control Panel" inputs without dead space
 
         # Calculate center
         center_width = total_width - left_width - right_width
@@ -1293,7 +1332,7 @@ class PodcastGeneratorWindow(QMainWindow):
             self.main_splitter.setSizes([left_width, center_width + right_width])
 
     def _enforce_control_panel_bounds(self) -> None:
-        """Prevent the right control panel from consuming excessive width."""
+        """Keep the control panel within sensible bounds without hard caps."""
         if not hasattr(self, "content_splitter"):
             return
 
@@ -1302,13 +1341,23 @@ class PodcastGeneratorWindow(QMainWindow):
             return
 
         right_width = sizes[1]
-        if right_width <= 500:
-            return
-
         total = sum(sizes)
-        target_right = min(480, right_width)
-        target_left = max(200, total - target_right)
-        self.content_splitter.setSizes([target_left, target_right])
+
+        # Enforce a soft minimum to avoid the panel collapsing entirely
+        min_right = 220
+        if right_width < min_right and total > 0:
+            target_right = min_right
+            target_left = max(120, total - target_right)
+            self.content_splitter.setSizes([target_left, target_right])
+
+    def _schedule_layout_save(self) -> None:
+        """Debounce layout saves so slight drags still persist."""
+        if not hasattr(self, "_layout_save_timer"):
+            self._layout_save_timer = QTimer(self)
+            self._layout_save_timer.setSingleShot(True)
+            self._layout_save_timer.timeout.connect(self._persist_window_layout)
+        # restart debounce timer (200ms)
+        self._layout_save_timer.start(200)
 
     def _persist_window_layout(self) -> None:
         """Persist the current window geometry/splitter sizes to preferences."""
