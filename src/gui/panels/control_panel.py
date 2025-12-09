@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -32,13 +32,18 @@ def build_control_panel(
     4) Actions (Run Pipeline)
     """
     panel = QWidget()
-    panel.setMaximumWidth(500)
+    # Allow the app-level scroll wrapper to drive resizing while preventing bleed
+    panel.setMinimumWidth(380)
+    panel.setMaximumWidth(550)
+    panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
     outer_layout = QVBoxLayout(panel)
     outer_layout.setContentsMargins(0, 0, 0, 0)
-    outer_layout.setSpacing(0)
+    outer_layout.setSpacing(12)
 
     content = QWidget()
+    content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     layout = QVBoxLayout(content)
+    layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(12)
 
     # --- Inputs ---
@@ -211,11 +216,5 @@ def build_control_panel(
     layout.addWidget(actions_box)
 
     layout.addStretch(1)
-
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    scroll.setWidget(content)
-
-    outer_layout.addWidget(scroll)
+    outer_layout.addWidget(content)
     return panel

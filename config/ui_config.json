@@ -1,0 +1,10 @@
+{
+  "chat_font_family": "Assistant",
+  "chat_font_size": 13,
+  "chat_theme": "dark",
+  "chat_banner_brightness": 0.85,
+  "chat_bg_theme": "midnight",
+  "default_tts_provider": "azure",
+  "right_panel_width": 520
+}
+

@@ -112,6 +112,7 @@ M.B.S Studio ingests a raw transcript (±30K words), enriches it with AI-driven 
 ## Key Highlights
 - **Multi-stage pipeline** (Dialogue → Speech → Video) orchestrated via CLI or GUI.
 - **NotebookLM-inspired metadata fabric** powered by Azure OpenAI & Gemini for bilingual contexts.
+- **UI state persistence**: right rail width and chat font selections are saved to `config/ui_config.json` so your layout sticks between sessions.
 - **Hebrew-first UX** with dynamic RTL/LTR text alignment (Hebrew messages align right, English left), RTL-aware chat, metadata editor, story preview, and gallery.
 - **Dual TTS Support**: Azure Neural TTS (fast & affordable) or ElevenLabs (natural voices, 30+ options).
 - **ElevenLabs Voice Selector**: Browse and preview 30+ voices with real-time provider switching.

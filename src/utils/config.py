@@ -86,7 +86,12 @@ class Settings:
     enable_visuals: bool = field(default_factory=lambda: _to_bool(os.getenv("ENABLE_VISUALS"), True))
     cache_dialogues: bool = field(default_factory=lambda: _to_bool(os.getenv("CACHE_DIALOGUES"), True))
     ui_preferences_path: Path = field(
-        default_factory=lambda: Path(os.getenv("CHAT_PREFERENCES_PATH", "config/ui_prefs.json"))
+        default_factory=lambda: Path(
+            os.getenv(
+                "UI_CONFIG_PATH",
+                os.getenv("CHAT_PREFERENCES_PATH", "config/ui_config.json"),
+            )
+        )
     )
     chat_font_family: str = field(default_factory=lambda: os.getenv("CHAT_FONT_FAMILY", "Assistant"))
     chat_font_path: str = field(default_factory=lambda: os.getenv("CHAT_FONT_PATH", ""))
@@ -114,6 +119,7 @@ class Settings:
     voice_selector_geometry: str = field(default_factory=lambda: "")
     main_window_geometry: str = field(default_factory=lambda: "")
     main_window_state: str = field(default_factory=lambda: "")
+    right_panel_width: int = field(default_factory=lambda: 520)
     main_splitter_sizes: List[int] = field(default_factory=list)
     content_splitter_sizes: List[int] = field(default_factory=list)
     preview_mode: bool = field(default_factory=lambda: _to_bool(os.getenv("PREVIEW_MODE"), False))
@@ -157,11 +163,36 @@ class Settings:
         )
 
     def _load_ui_preferences(self) -> None:
-        if not self.ui_preferences_path.exists():
-            return
-        try:
-            prefs = json.loads(self.ui_preferences_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        """
+        Load persisted UI configuration (fonts, splitter sizes, etc.) from disk.
+        
+        Uses a primary config file (defaults to config/ui_config.json) and falls back
+        to the legacy config/ui_prefs.json if found. Any malformed file is ignored
+        so the application can continue with built-in defaults.
+        """
+        candidates = [self.ui_preferences_path]
+        legacy_path = Path("config/ui_prefs.json")
+        if legacy_path != self.ui_preferences_path and legacy_path.exists():
+            candidates.append(legacy_path)
+
+        primary_path = self.ui_preferences_path
+        prefs: Optional[Dict[str, object]] = None
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                prefs = json.loads(path.read_text(encoding="utf-8"))
+                # If we loaded a legacy file, keep saving to the new primary path
+                if path != primary_path:
+                    print(f"[Settings] Loaded legacy UI config from {path}; will re-save to {primary_path}")
+                else:
+                    self.ui_preferences_path = path
+                break
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"[Settings] Warning: UI config at {path} is unreadable ({exc}); using defaults.")
+                continue
+
+        if prefs is None:
             return
         
         # Valid values for validation
@@ -201,6 +232,7 @@ class Settings:
             "visual_metadata_system_prompt",
             "main_window_geometry",
             "main_window_state",
+            "right_panel_width",
             "main_splitter_sizes",
             "content_splitter_sizes",
         ):
@@ -260,6 +292,12 @@ class Settings:
                         value = [int(v) for v in value if isinstance(v, (int, float))]
                     else:
                         value = []
+                if key == "right_panel_width":
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        value = 520
+                    value = max(320, min(1200, value))
                 if key == "chat_font_size":
                     try:
                         value = int(value)
@@ -301,6 +339,7 @@ class Settings:
             "visual_metadata_system_prompt",
             "main_window_geometry",
             "main_window_state",
+            "right_panel_width",
             "main_splitter_sizes",
             "content_splitter_sizes",
         }
