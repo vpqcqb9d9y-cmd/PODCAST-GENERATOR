@@ -90,10 +90,10 @@ def build_workspace_panel(
     splitter.setChildrenCollapsible(False)
     splitter.addWidget(chat_card)
     splitter.addWidget(attachments_card)
-    # Bias the splitter strongly toward chat so the live conversation gets space
+    # Bias toward chat but start more compact so it doesn't dominate the view
     splitter.setStretchFactor(0, 6)
     splitter.setStretchFactor(1, 2)
-    splitter.setSizes([720, 240])
+    splitter.setSizes([440, 280])
     layout.addWidget(splitter, 8)
     
     # Chat input row
@@ -221,7 +221,7 @@ def _build_chat_card(
         QSizePolicy.Policy.Expanding,
     )
     # Start compact but allow user to resize via splitter
-    parent.chat_history.setMinimumHeight(320)
+    parent.chat_history.setMinimumHeight(220)
     parent.chat_history.setWordWrap(True)
     parent.chat_history.setHorizontalScrollBarPolicy(
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff
