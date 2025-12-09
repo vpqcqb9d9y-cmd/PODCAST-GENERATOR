@@ -1,0 +1,18 @@
+{
+  "topic": "Azure Networking Basics",
+  "date": "2025-11-25",
+  "key_concepts": [
+    "Virtual Network (VNet)",
+    "Subnets",
+    "Network Security Groups (NSG)",
+    "Load Balancer",
+    "Application Gateway"
+  ],
+  "labs": [
+    "Lab 1: יצירת VNet עם שתי subnets",
+    "Lab 2: הגדרת NSG עם חוקי inbound"
+  ],
+  "summary": "שיעור מבוא לרשתות ב-Azure הכולל VNet, Subnets, NSG ו-Load Balancer",
+  "speaker": "מדריך Azure"
+}
+

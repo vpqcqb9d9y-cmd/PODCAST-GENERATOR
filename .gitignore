@@ -1,0 +1,15 @@
+outputs/
+venv/
+.venv/
+__pycache__/
+.env
+config/ui_prefs.json
+voice_profiles.json
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.mkv
+*.log
+processing_log.txt
+

@@ -1,0 +1,113 @@
+{
+  "background": "יצירת תמונות ויזואליות לסרטון על השיר 'המדומיין' של פאר טסי - ניתוח ויזואלי ומטא-דאטה ליצירת תוכן מבוסס AI. התמונות צריכות לשקף את המסע האישי של נער ישראלי הרודף אחר חלומותיו בכדורסל ובמוזיקה, תוך שימור אסתטיקה מזרחית אותנטית.",
+  "general_notes": {
+    "aesthetics": "אסתטיקה מזרחית ישראלית - צבעים חמים, תאורה דרמטית, מוטיבים של כדורסל, מוזיקה ומאבק אישי. שימוש בפלטת צבעים חמה עם נגיעות של כחול וזהב.",
+    "style_guide": "תמונות ריאליסטיות עם אלמנטים אמנותיים, השראה מהקליפים הישראליים המודרניים, דגש על רגשות והבעה.",
+    "technical_specs": "רזולוציה גבוהה, פורמט 16:9, מתאים להעלאה לפלטפורמות חברתיות ויוטיוב."
+  },
+  "images": [
+    {
+      "index": 1,
+      "title": "התמדה - כדורסל בחשיכה",
+      "prompt": "נער צעיר ישראלי ממוצא מזרחי, עומד על מגרש כדורסל חשוך באמצע הלילה, אוחז בכדורסל, מבט נחוש בעיניים, תאורה חמה מהירח, צללים ארוכים, אסתטיקה מזרחית עם גרפיטי עברי על הקיר, צבעים חמים אדומים וכתומים עם נגיעות כחול, סגנון ריאליסטי עם אלמנטים אמנותיים, 4K",
+      "style": "photorealistic with artistic elements, dramatic lighting, warm color palette",
+      "mood": "determined, hopeful, melancholic",
+      "color_palette": "warm oranges and reds with blue accents, nighttime lighting",
+      "background_context": "מייצג את השורה 'גם כשכולם הולכים לישון, נשאר לזרוק לבד' - התמדה למרות הקשיים"
+    },
+    {
+      "index": 2,
+      "title": "אמונה עצמית - מראה שבורה",
+      "prompt": "נער ישראלי צעיר מסתכל במראה שבורה, רואה את עצמו כשחקן כדורסל מצליח, אבל המראה משקפת גם את המציאות הקשה, חדר מוזנח עם פוסטרים של שחקני כדורסל, אור חם מחלון, אסתטיקה מזרחית עם וילונות רקומים, צבעים חמים עם קונטרסטים חזקים, סגנון ריאליסטי עם אלמנטים סוריאליסטיים קלים",
+      "style": "realistic with surreal elements, warm lighting, high contrast",
+      "mood": "confident yet vulnerable, introspective",
+      "color_palette": "warm ambers and golds with cool blue reflections",
+      "background_context": "מייצג את האמונה העצמית למרות הספקות והביקורת מהסביבה"
+    },
+    {
+      "index": 3,
+      "title": "דחייה וביקורת - קהל צוחק",
+      "prompt": "נער צעיר עומד על במה קטנה, מנגן על גיטרה, הקהל מסביב צוחק ומתלחש, אבל הוא ממשיך לנגן בעוצמה, תאורה אדומה חמה מהבמה, אסתטיקה מזרחית עם קישוטים מסורתיים ברקע, צבעים אדומים וכתומים בוערים, סגנון דרמטי עם תנועה קפואה, ריאליזם עם דגש על רגשות",
+      "style": "dramatic realism, warm theatrical lighting, emotional intensity",
+      "mood": "rejected, determined, defiant",
+      "color_palette": "burning reds and oranges, warm amber highlights",
+      "background_context": "מייצג את הדחייה והביקורת מהסביבה אבל ההתמדה במרדף אחר החלום"
+    },
+    {
+      "index": 4,
+      "title": "בדידות יצירתית - חדר ריק עם מוזיקה",
+      "prompt": "חדר ריק עם נער יושב על הרצפה, מקשיב למוזיקה באוזניות, סביבו תווים מוזיקליים מרחפים באוויר, אור כחול קר מהחלון, אסתטיקה מזרחית עם שטיח רקום, צבעים קרים כחולים עם נגיעות חמות, סגנון אמנותי עם אלמנטים מופשטים, אווירה בודדה אבל יצירתית",
+      "style": "artistic with abstract elements, cool blue lighting, creative atmosphere",
+      "mood": "lonely, creative, introspective",
+      "color_palette": "cool blues with warm accents, nighttime ambiance",
+      "background_context": "מייצג את הבדידות של התהליך היצירתי אבל גם את הכוח של המוזיקה"
+    },
+    {
+      "index": 5,
+      "title": "חלומות ושאיפות - כוכבים בשמיים",
+      "prompt": "נער צעיר עומד על גג בניין, מסתכל על שמיים מלאי כוכבים, חולם להיות כוכב כדורסל או זמר, כדורסל לצידו, גיטרה על הגב, אור כחול קר מהכוכבים, אסתטיקה מזרחית עירונית, צבעים כחולים עמוקים עם זהב, סגנון חלומי עם ריאליזם, השראה מהשכונות הישראליות",
+      "style": "dreamlike realism, starlit blue lighting, aspirational mood",
+      "mood": "dreamy, ambitious, hopeful",
+      "color_palette": "deep blues with golden starlight, cool nighttime tones",
+      "background_context": "מייצג את החלומות והשאיפות הגדולות למרות המציאות הקשה"
+    },
+    {
+      "index": 6,
+      "title": "מוזיקה מזרחית ישראלית - מיקס של עולמות",
+      "prompt": "נער משלב בין כדורסל למוזיקה - דריבלינג עם קצב מוזיקלי, כדורסל הופך לתווים מוזיקליים, רקע של שכונה ישראלית מזרחית, צבעים חמים של מוזיקה מזרחית, סגנון דינמי עם תנועה, אסתטיקה ישראלית אותנטית, מיזוג בין ספורט למוזיקה",
+      "style": "dynamic fusion, warm ethnic colors, motion blur effects",
+      "mood": "energetic, cultural fusion, proud",
+      "color_palette": "warm ethnic reds, oranges, and golds, vibrant and lively",
+      "background_context": "מייצג את המיזוג בין מוזיקה מזרחית ישראלית לכדורסל והתרבות המקומית"
+    },
+    {
+      "index": 7,
+      "title": "אסתטיקה ויזואלית - קליפ מוזיקלי",
+      "prompt": "סצנה מקליפ מוזיקלי ישראלי - נער רוקד עם כדורסל ברחוב, מצלמה דינמית, אפקטים ויזואליים של תווים מוזיקליים, אסתטיקה מזרחית עכשווית, צבעים תוססים וחמים, סגנון קליפ מוזיקלי מודרני, אנרגיה גבוהה ותנועה",
+      "style": "music video aesthetic, dynamic camera, vibrant colors",
+      "mood": "energetic, modern, culturally authentic",
+      "color_palette": "vibrant warm colors, dynamic lighting effects",
+      "background_context": "מייצג את האסתטיקה הויזואלית של הקליפ והתרבות המוזיקלית הישראלית"
+    },
+    {
+      "index": 8,
+      "title": "יצירת תוכן מבוסס AI - כלים מתקדמים",
+      "prompt": "מסך מחשב עם תמונות AI של נער עם כדורסל, כלים כמו Midjourney, DALL-E, Stable Diffusion, יד אמן עובדת על עיצוב, אסתטיקה טכנולוגית עם נגיעה מזרחית, צבעים קרים של טכנולוגיה עם חום אנושי, סגנון דיגיטלי מודרני, חיבור בין טכנולוגיה ליצירה",
+      "style": "digital art, technological aesthetic, modern interface design",
+      "mood": "innovative, creative, futuristic yet personal",
+      "color_palette": "cool tech blues with warm human touches",
+      "background_context": "מייצג את השימוש בכלי AI ליצירת תוכן ויזואלי"
+    },
+    {
+      "index": 9,
+      "title": "סיפור אישי - מסע מלא תקווה",
+      "prompt": "קולאז' של נער במסע - מתחיל בחשיכה, מסתיים באור, כדורסל, מוזיקה, קהל, הצלחה, אסתטיקה מזרחית עשירה, צבעים משתנים מחשיכה לאור, סגנון נרטיבי עם אלמנטים מופשטים, מסע התפתחותי מלא תקווה",
+      "style": "narrative collage, evolving colors from dark to light",
+      "mood": "hopeful, transformative, personal journey",
+      "color_palette": "evolving from cool dark blues to warm golden lights",
+      "background_context": "מייצג את הסיפור האישי והמסע מהקושי להצלחה"
+    },
+    {
+      "index": 10,
+      "title": "מטא-דאטה לוידאו - סיכום פרויקט",
+      "prompt": "לוח שרטוטים עם רעיונות לווידאו, תמונות, פרומפטים, צבעים, סגנונות, אסתטיקה מזרחית בולטת, צבעים חמים ומזמינים, סגנון יצירתי ואורגני, כלי עבודה של יוצר תוכן, השראה והכנה לפרויקט גדול",
+      "style": "creative planning, warm inviting colors, organic design",
+      "mood": "inspirational, planning, creative preparation",
+      "color_palette": "warm inviting colors, creative and energetic",
+      "background_context": "מייצג את תהליך היצירה והתכנון של הפרויקט כולו"
+    }
+  ],
+  "video": {
+    "prompt": "קליפ מוזיקלי מלא לסרטון 'המדומיין' של פאר טסי, משלב כדורסל ומוזיקה, מסע אישי מלא תקווה, אסתטיקה מזרחית ישראלית אותנטית, צבעים חמים ואנרגטיים, קצב דינמי עם רגעים איטיים רגשיים, מצלמה דינמית, אפקטים ויזואליים של תווים מוזיקליים וכדורסל, סגנון קליפ מודרני ישראלי",
+    "duration_seconds": 180,
+    "scenes": [
+      "פתיחה - מגרש כדורסל חשוך, נער לבד מתאמן",
+      "פיתוח - דחייה מהקהל, אבל המשך בנחישות",
+      "שיא - מיזוג מוזיקה וכדורסל, אנרגיה גואה",
+      "סיום - תקווה ואמונה, אור מבקיע את החשיכה"
+    ],
+    "music_sync": "סינכרון מושלם עם הקצב והרגש של השיר",
+    "target_platforms": ["YouTube", "TikTok", "Instagram"],
+    "style_guide": "אסתטיקה מזרחית עכשווית, צבעים חמים, אנרגיה ישראלית"
+  }
+}

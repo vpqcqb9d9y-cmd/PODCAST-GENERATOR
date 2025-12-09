@@ -1,0 +1,15 @@
+שלום לכולם, ברוכים הבאים לשיעור בנושא Azure Networking. היום נדבר על כמה מושגים חשובים בתחום הענן.
+
+Virtual Network הוא אחד המושגים הבסיסיים ביותר. VNet מספק לנו סביבה מבודדת בענן, בדיוק כמו רשת פרטית בארגון.
+
+בתוך ה-VNet אפשר להגדיר Subnets, כלומר תתי-רשתות. כל subnet יכול לשמש למטרה אחרת, למשל subnet לשרתי web, subnet לבסיסי נתונים, ו-subnet לשירותים פנימיים.
+
+Network Security Groups, או בקיצור NSG, הם כמו חומת אש לרמת ה-subnet או ה-VM. הם מאפשרים לנו להגדיר חוקי אבטחה של inbound ו-outbound.
+
+Load Balancer מחלק עומסים בין כמה instances של אפליקציה. יש שני סוגים: Public Load Balancer לתעבורה מהאינטרנט, ו-Internal Load Balancer לתעבורה פנימית.
+
+Application Gateway הוא load balancer ברמת Layer 7 עם יכולות WAF. הוא מתאים במיוחד לאפליקציות web.
+
+לסיכום, למדנו היום את הבסיס של רשתות ב-Azure. תרגלו את יצירת VNet עם NSG ותראו כמה זה פשוט.
+
+

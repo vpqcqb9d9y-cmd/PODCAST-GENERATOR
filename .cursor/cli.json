@@ -1,0 +1,7 @@
+{
+  "permissions": [
+    "Read(.env)",
+    "Read(.env.local)",
+    "Read(.env.*)"
+  ]
+}
