@@ -122,7 +122,7 @@ class ElevenLabsSpeechSynthesizer:
         self.voice_overrides: Dict[str, Dict[str, str]] = getattr(
             self.settings, "elevenlabs_voice_overrides", {}
         ) or {}
-        
+
         # Log voice overrides status
         if self.voice_overrides:
             self.logger.info("ElevenLabs voice overrides loaded: %s", 
@@ -146,34 +146,34 @@ class ElevenLabsSpeechSynthesizer:
 
         self.client = ElevenLabs(api_key=settings.elevenlabs_api_key)
 
+    @staticmethod
+    def normalize_hebrew_text(text: str) -> str:
+        """
+        Wrap Latin tokens to preserve Hebrew reading order for ElevenLabs.
 
-def normalize_hebrew_text(text: str) -> str:
-    """
-    Wrap Latin tokens to preserve Hebrew reading order for ElevenLabs.
+        - Detect Hebrew presence; if none, return original text.
+        - Wrap any token containing Latin letters/digits with LTR isolate so the
+          multilingual model keeps Hebrew flow intact (helps with CCNA terms).
+        """
+        if not text:
+            return text
 
-    - Detect Hebrew presence; if none, return original text.
-    - Wrap any token containing Latin letters/digits with LTR isolate so the
-      multilingual model keeps Hebrew flow intact (helps with CCNA terms).
-    """
-    if not text:
-        return text
+        contains_hebrew = any("\u0590" <= c <= "\u05FF" for c in text)
+        if not contains_hebrew:
+            return text
 
-    contains_hebrew = any("\u0590" <= c <= "\u05FF" for c in text)
-    if not contains_hebrew:
-        return text
-
-    tokens = re.split(r"(\s+)", text)
-    normalized: List[str] = []
-    for tok in tokens:
-        if not tok or tok.isspace():
-            normalized.append(tok)
-            continue
-        if re.search(r"[A-Za-z0-9]", tok):
-            # LTR isolate markers keep Latin tokens embedded without reversing
-            normalized.append(f"\u2066{tok}\u2069")
-        else:
-            normalized.append(tok)
-    return "".join(normalized)
+        tokens = re.split(r"(\s+)", text)
+        normalized: List[str] = []
+        for tok in tokens:
+            if not tok or tok.isspace():
+                normalized.append(tok)
+                continue
+            if re.search(r"[A-Za-z0-9]", tok):
+                # LTR isolate markers keep Latin tokens embedded without reversing
+                normalized.append(f"\u2066{tok}\u2069")
+            else:
+                normalized.append(tok)
+        return "".join(normalized)
 
     def synthesize(
         self, dialogue_path: Path, run_paths: RunPaths, force: bool = False
@@ -392,11 +392,12 @@ def normalize_hebrew_text(text: str) -> str:
             if voice_id:
                 model = override.get("model") or "eleven_turbo_v2_5"
                 self.logger.info("Using ElevenLabs override for %s (%s)", speaker, voice_id[:8])
-                return {
+                result = {
                     "voice_id": voice_id,
                     "model": model,
                     **({"settings": override.get("settings")} if override.get("settings") else {}),
                 }
+                return result
             self.logger.warning(
                 "Invalid ElevenLabs override for %s (missing voice_id). Falling back to profile.", speaker
             )

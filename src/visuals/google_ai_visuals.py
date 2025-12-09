@@ -33,6 +33,12 @@ from ..utils import RunPaths, Settings, get_logger
 # Visual generation modes
 VisualMode = Literal["network_map", "architecture", "slide_background", "concept_illustration", "animation"]
 
+# Topic color schemes for tests and theming
+TOPIC_COLOR_SCHEMES = {
+    "azure": "professional blue",
+    "default": "neutral modern",
+}
+
 # Default prompts for different visual types
 DEFAULT_PROMPTS = {
     "network_map": (
@@ -96,6 +102,12 @@ class GoogleAIVisualGenerator:
             return
         
         try:
+            try:
+                import google.generativeai as genai  # type: ignore
+                genai.configure(api_key=self.settings.gemini_api_key)
+            except Exception:
+                pass
+
             # Try the new google.genai Client API first (supports Imagen 3)
             try:
                 from google import genai  # type: ignore

@@ -349,6 +349,7 @@ class PodcastGeneratorWindow(QMainWindow):
         self.voice_lab_scroll = self._wrap_scroll_area(self.voice_lab_panel)
         self.control_tabs = QTabWidget()
         self.control_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        # Keep right rail wide enough to avoid crushed inputs
         self.control_tabs.setMinimumWidth(360)
         self.control_tabs.addTab(self.summary_scroll, "🧭 Control Panel")
         self.control_tabs.addTab(self.voice_lab_scroll, "🎙️ Voice Lab")
@@ -1282,7 +1283,7 @@ class PodcastGeneratorWindow(QMainWindow):
             left, right = sizes[0], sizes[1]
             total = sum(sizes) or 1
             # Only treat as invalid if clearly broken
-            return min(left, right) < 60 or total < 200
+            return min(left, right) < 260 or total < 400
 
         def _is_invalid_main_split() -> bool:
             if not self.main_splitter:
@@ -1303,14 +1304,14 @@ class PodcastGeneratorWindow(QMainWindow):
         """
         Prioritize the Center Workspace.
         Left Panel: small (~250px).
-        Right Panel: medium (~400px) just enough for the forms.
+        Right Panel: medium (~360px) just enough for the forms.
         Center Panel: takes remaining space.
         """
         total_width = self.width()
 
         # Define ideal widths for side panels
         left_width = 250
-        right_width = 400  # Enough for "Control Panel" inputs without dead space
+        right_width = 360  # Enough for "Control Panel" inputs without dead space
 
         # Calculate center
         center_width = total_width - left_width - right_width
@@ -1344,10 +1345,10 @@ class PodcastGeneratorWindow(QMainWindow):
         total = sum(sizes)
 
         # Enforce a soft minimum to avoid the panel collapsing entirely
-        min_right = 220
+        min_right = 340
         if right_width < min_right and total > 0:
-            target_right = min_right
-            target_left = max(120, total - target_right)
+            target_right = 360
+            target_left = max(180, total - target_right)
             self.content_splitter.setSizes([target_left, target_right])
 
     def _schedule_layout_save(self) -> None:

@@ -18,11 +18,11 @@ from typing import Dict
 # Application Identity
 # =============================================================================
 
-APP_VERSION = "3.1.3"
+APP_VERSION = "3.2.0"
 """Current application version."""
 
-APP_BUILD_DATE = "2025-12-05"
-"""Build date for this version (v3.1.3 - backup/import polish + UI prefs persistence)."""
+APP_BUILD_DATE = "2025-12-09"
+"""Build date for this version (v3.2.0 - ProductionGuardian release)."""
 
 APP_DISPLAY_NAME = "M.B.S Studio"
 """The display name shown in window titles and UI elements."""

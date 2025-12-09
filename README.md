@@ -116,6 +116,7 @@ M.B.S Studio ingests a raw transcript (±30K words), enriches it with AI-driven 
 - **Dual TTS Support**: Azure Neural TTS (fast & affordable) or ElevenLabs (natural voices, 30+ options).
 - **ElevenLabs Voice Selector**: Browse and preview 30+ voices with real-time provider switching.
 - **Visual Model Selector**: Pick Imagen 4 (standard/fast) per run; deprecated Imagen 3 fast auto-migrates to Imagen 4.
+- **Production Guardian (NEW)**: Auto-heals visuals, removes black frames, normalizes audio loudness, and applies Ken Burns to static images before final render.
 
 ### Visual Generation (NEW v2.6.1)
 - **5 Visual Modes**: Choose from Manim (free), Imagen (images), Imagen+Manim ⭐, VEO (video), Hybrid 💎
@@ -129,6 +130,7 @@ M.B.S Studio ingests a raw transcript (±30K words), enriches it with AI-driven 
 - **Always-On System Indicators**: מדדי CPU/NET/🔋 חוזרים לשורת הסטטוס התחתונה לטובת מסכים קטנים, בלי לוותר על תג הסטטוס הקומפקטי בכותרת.
 
 ### Recent Updates (v3.2.0)
+- ProductionGuardian safeguards: validates assets, removes black frames, adaptive timelines without placeholders, Ken Burns pan/zoom, and audio normalization before video render.
 - Voice Lab recording runs on a background thread with Stop / Play Preview / Delete controls to keep the UI responsive.
 - Smart Preview caps dialogue to 3 turns, forces auto video duration, and limits preview images to 3 while preferring real frames over placeholders to avoid purple screens.
 - Imagen selection is pinned to `imagen-4.0-generate-001` (fast/3.x values auto-upgrade) to prevent provider 404 errors.

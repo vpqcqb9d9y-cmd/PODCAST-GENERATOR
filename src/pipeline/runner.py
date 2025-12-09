@@ -12,6 +12,7 @@ from ..dialogue import DialogueGenerator
 from ..metadata import MetadataIngestor, MetadataChatSession
 from ..outputs import SlideDeckExporter, StoryExporter
 from ..utils import CostTracker, HistoryManager, RunPaths, Settings, VoiceProfileManager, get_logger, TimingContext, QualityChecker
+from ..utils.guardian import ProductionGuardian
 from ..utils.visual_metadata_builder import build_visual_metadata_locally, generate_universal_visual_metadata
 from ..visuals import ManimSceneGenerator, VideoComposer, GoogleAIVisualGenerator
 
@@ -383,6 +384,7 @@ class LecturePipeline:
             timing.checkpoint("audio_stitching")
 
             dialogue_json = json.loads(dialogue_file.read_text(encoding="utf-8"))
+            expected_segments = len(dialogue_json.get("dialogue", [])) if isinstance(dialogue_json, dict) else 0
             
             if not visual_metadata or not visual_metadata.get("images"):
                 run_paths.log("Generating visual metadata from transcript and dialogue.")
@@ -461,6 +463,8 @@ class LecturePipeline:
                 )
                 run_paths.log(visual_summary)
                 self.logger.info(visual_summary)
+                optimized_assets: List[Path] = []
+
                 if use_google_ai:
                     google_status = self.google_ai.status_summary()
                     run_paths.log(f"[Google Imagen] {google_status}")
@@ -535,9 +539,38 @@ class LecturePipeline:
                     if not scene_paths:
                         self.logger.info("[LecturePipeline.run] No Manim scenes generated")
                 
+                # Guardian: validate assets and auto-heal before composition
+                guardian_qc = QualityChecker(self.settings)
+                guardian_report = guardian_qc.run_postprocess_checks(
+                    run_dir=run_paths.run_dir,
+                    expected_segments=expected_segments,
+                    run_type=run_type,
+                )
+                guardian = ProductionGuardian(run_paths, self.settings, guardian_report)
+                guardian_result = guardian.optimize_and_fix(
+                    metadata=metadata,
+                    visual_metadata=visual_metadata,
+                )
+                optimized_assets = guardian_result.assets
+                if guardian_result.adaptive_timeline:
+                    run_paths.log("ProductionGuardian: Adaptive timeline enabled (stretching available visuals).")
+                if guardian_result.audio_normalized:
+                    run_paths.log("ProductionGuardian: Audio normalized to safe loudness.")
+
                 # Compose final video
                 try:
-                    self.video.compose(dialogue_json, metadata, run_paths)
+                    try:
+                        self.video.compose(
+                            dialogue_json,
+                            metadata,
+                            run_paths,
+                            asset_paths=optimized_assets,
+                            adaptive_timeline=guardian_result.adaptive_timeline,
+                            apply_ken_burns=guardian_result.ken_burns,
+                        )
+                    except TypeError:
+                        # Backward compatibility with simplified composers (e.g., tests)
+                        self.video.compose(dialogue_json, metadata, run_paths)
                     if not run_paths.final_video_path.exists():
                         raise RuntimeError(
                             f"VideoComposer completed without creating file: {run_paths.final_video_path}"
@@ -560,16 +593,7 @@ class LecturePipeline:
             stage_start = time.time()
             run_paths.log("Running post-processing quality checks...")
             self.logger.info("[LecturePipeline.run] Running post-processing quality checks")
-            
-            # Get expected segment count from dialogue
-            expected_segments = 0
-            if dialogue_file and dialogue_file.exists():
-                try:
-                    dialogue_data = json.loads(dialogue_file.read_text(encoding="utf-8"))
-                    expected_segments = len(dialogue_data.get("dialogue", []))
-                except Exception:
-                    pass
-            
+
             postprocess_report = self.quality_checker.run_postprocess_checks(
                 run_dir=run_paths.run_dir,
                 expected_segments=expected_segments,
