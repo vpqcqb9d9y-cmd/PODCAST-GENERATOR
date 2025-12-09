@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -125,12 +126,10 @@ def build_control_panel(
     parent.include_visuals_cb = QCheckBox("כלול וידאו/ויזואליזציות")
     parent.include_visuals_cb.setChecked(True)
     parent.include_visuals_cb.setToolTip("יצירת וידאו/תמונות (עלות נוספת לפי מנוע נבחר).")
-    parent.include_visuals_cb.setVisible(False)
     parent.export_ppt_cb = QCheckBox("יצירת מצגת")
     parent.export_ppt_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     parent.export_ppt_cb.setChecked(False)
     parent.export_ppt_cb.setToolTip("ייצוא מצגת PPTX מסיכומי ההרצאה.")
-    parent.export_ppt_cb.setVisible(False)
     settings_layout.addWidget(parent.include_visuals_cb)
     settings_layout.addWidget(parent.export_ppt_cb)
 
@@ -198,6 +197,28 @@ def build_control_panel(
     meta_layout.addLayout(visual_row)
 
     layout.addWidget(meta_box)
+
+    # --- Run status (ETA/progress) ---
+    status_box = QGroupBox("🚦 סטטוס ו-ETA")
+    status_layout = QVBoxLayout(status_box)
+
+    parent.run_stage_label = QLabel("אין ריצה פעילה")
+    parent.run_stage_label.setStyleSheet("font-size:16px;font-weight:600;")
+    status_layout.addWidget(parent.run_stage_label)
+
+    parent.run_progress_bar = QProgressBar()
+    parent.run_progress_bar.setRange(0, 100)
+    parent.run_progress_bar.setValue(0)
+    status_layout.addWidget(parent.run_progress_bar)
+
+    parent.run_timer_label = QLabel("כשתתחיל הרצה נראה כאן את ההתקדמות וה-ETA.")
+    parent.run_timer_label.setProperty("class", "helper")
+    status_layout.addWidget(parent.run_timer_label)
+
+    parent.run_status_card = status_box
+    parent.run_status_card.setVisible(False)
+
+    layout.addWidget(status_box)
 
     # --- Actions ---
     actions_box = QGroupBox("🚀 שלב 3: ביצוע (Actions)")

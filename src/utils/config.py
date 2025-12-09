@@ -122,6 +122,8 @@ class Settings:
     right_panel_width: int = field(default_factory=lambda: 520)
     main_splitter_sizes: List[int] = field(default_factory=list)
     content_splitter_sizes: List[int] = field(default_factory=list)
+    output_mode: str = field(default_factory=lambda: "video_audio")
+    include_visuals: bool = field(default_factory=lambda: True)
     preview_mode: bool = field(default_factory=lambda: _to_bool(os.getenv("PREVIEW_MODE"), False))
     
     def __post_init__(self) -> None:
@@ -235,6 +237,8 @@ class Settings:
             "right_panel_width",
             "main_splitter_sizes",
             "content_splitter_sizes",
+            "output_mode",
+            "include_visuals",
         ):
             if key in prefs:
                 value = prefs[key]
@@ -308,6 +312,12 @@ class Settings:
                         value = float(value)
                     except (TypeError, ValueError):
                         value = 0.85
+                if key == "output_mode":
+                    if value not in {"audio", "video_audio", "presentation", "all", "mixed"}:
+                        print(f"[Settings] Invalid output_mode '{value}', using default 'video_audio'")
+                        value = "video_audio"
+                    if value == "mixed":
+                        value = "video_audio"
                 if hasattr(self, key):
                     setattr(self, key, value)
                 else:
@@ -342,6 +352,8 @@ class Settings:
             "right_panel_width",
             "main_splitter_sizes",
             "content_splitter_sizes",
+            "output_mode",
+            "include_visuals",
         }
         data = {key: payload[key] for key in payload if key in allowed}
         if not data:

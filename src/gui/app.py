@@ -782,6 +782,19 @@ class PodcastGeneratorWindow(QMainWindow):
         if self.tts_provider_combo:
             self._handle_tts_provider_change()
         if self.output_mode_combo:
+            saved_mode = getattr(self.settings, "output_mode", "video_audio") or "video_audio"
+            idx = self.output_mode_combo.findData(saved_mode)
+            if idx < 0:
+                # Prefer video as the default so visuals are included
+                idx = self.output_mode_combo.findData("video_audio")
+            if idx >= 0:
+                self.output_mode_combo.setCurrentIndex(idx)
+        if hasattr(self, "include_visuals_cb") and self.include_visuals_cb:
+            try:
+                self.include_visuals_cb.setChecked(bool(getattr(self.settings, "include_visuals", True)))
+            except Exception:
+                self.include_visuals_cb.setChecked(True)
+        if self.output_mode_combo:
             self.output_mode_combo.currentIndexChanged.connect(self._handle_output_mode_change)
             self._handle_output_mode_change()
         return panel
@@ -1615,7 +1628,7 @@ class PodcastGeneratorWindow(QMainWindow):
         """Sync include_visuals/export_ppt based on the output mode combo."""
         if not hasattr(self, "output_mode_combo") or self.output_mode_combo is None:
             return
-        mode = self.output_mode_combo.currentData()
+        mode = self.output_mode_combo.currentData() or "video_audio"
         if mode == "audio":
             self.include_visuals_cb.setChecked(False)
             self.export_ppt_cb.setChecked(False)
@@ -1628,6 +1641,17 @@ class PodcastGeneratorWindow(QMainWindow):
         else:  # "all" or fallback
             self.include_visuals_cb.setChecked(True)
             self.export_ppt_cb.setChecked(True)
+        # Persist user choice so next launch keeps visuals preference
+        try:
+            self.settings.save_ui_preferences(
+                {
+                    "output_mode": mode,
+                    "include_visuals": bool(self.include_visuals_cb.isChecked()),
+                }
+            )
+        except Exception:
+            # Best-effort persistence; do not block UI
+            pass
 
     def _set_voice_lab_state(self, state: str) -> None:
         """State machine: idle -> recording -> review."""

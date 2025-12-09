@@ -312,6 +312,11 @@ VEO_MODEL=veo-2.0-generate-001
 - Set video duration: automatic (follows audio) or manual
 - Cost calculator with accurate pricing for all modes
 - "🧹 נקה טעינה" button clears workspace without deleting history data
+- UI preferences (splitter sizes, right panel width, fonts, output mode) are stored in `config/ui_config.json`. Delete this file to reset layout to defaults.
+
+## Troubleshooting
+
+- **Video not generated / command shows `--skip-visuals`:** Ensure the output mode is set to `Video + Audio` (or `Full Suite`) and that the "צור וידאו/ויזואליזציות" checkbox is checked. Preferences are persisted in `config/ui_config.json`, so if visuals were disabled previously, re-enable them and rerun.
 
 ### Custom Visual Metadata
 For professional-grade custom visuals instead of generic AI generation, create a `visual_metadata.json` file alongside your `metadata.json`:
