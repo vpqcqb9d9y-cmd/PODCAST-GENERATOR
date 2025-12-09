@@ -34,8 +34,8 @@ def build_control_panel(
     """
     panel = QWidget()
     # Allow the app-level scroll wrapper to drive resizing while preventing bleed
-    panel.setMinimumWidth(380)
-    panel.setMaximumWidth(550)
+    panel.setMinimumWidth(300)
+    panel.setMaximumWidth(360)
     panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
     outer_layout = QVBoxLayout(panel)
     outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -123,7 +123,11 @@ def build_control_panel(
     settings_layout.addLayout(inline_row("מצב פלט", parent.output_mode_combo, QPushButton(" ")))
     settings_layout.itemAt(settings_layout.count() - 1).layout().itemAt(2).widget().setVisible(False)
 
+    # Spacer to prevent Output Mode dropdown overlap with checkboxes below
+    settings_layout.addSpacing(8)
+
     parent.include_visuals_cb = QCheckBox("כלול וידאו/ויזואליזציות")
+    parent.include_visuals_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     parent.include_visuals_cb.setChecked(True)
     parent.include_visuals_cb.setToolTip("יצירת וידאו/תמונות (עלות נוספת לפי מנוע נבחר).")
     parent.export_ppt_cb = QCheckBox("יצירת מצגת")
@@ -135,13 +139,17 @@ def build_control_panel(
 
     parent.preview_mode_cb = QCheckBox("מצב טיוטה (30 שניות ראשונות)")
     parent.preview_mode_cb.setObjectName("preview_mode_cb")
+    parent.preview_mode_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     parent.preview_mode_cb.setChecked(getattr(parent.settings, "preview_mode", False))
     parent.preview_mode_cb.setToolTip("חוסך קרדיטים: מפעיל רק 5 פניות ראשונות לדיאלוג/קול.")
     settings_layout.addWidget(parent.preview_mode_cb)
 
     parent.skip_cache_cb = QCheckBox("דלג על מטמון דיאלוג")
+    parent.skip_cache_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     parent.force_cb = QCheckBox("דרוס קבצים קיימים (Force)")
+    parent.force_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     parent.dry_run_cb = QCheckBox("הרצה יבשה (ללא הפקה)")
+    parent.dry_run_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     settings_layout.addWidget(parent.skip_cache_cb)
     settings_layout.addWidget(parent.force_cb)
     settings_layout.addWidget(parent.dry_run_cb)

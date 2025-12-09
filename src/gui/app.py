@@ -332,23 +332,24 @@ class PodcastGeneratorWindow(QMainWindow):
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
         self.content_splitter.setHandleWidth(6)
+        self.content_splitter.setMinimumWidth(720)
         self.workspace_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.summary_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.voice_lab_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         self.workspace_scroll = self._wrap_scroll_area(self.workspace_panel)
-        self.workspace_scroll.setMinimumWidth(580)
+        self.workspace_scroll.setMinimumWidth(620)
 
         self.summary_scroll = self._wrap_scroll_area(self.summary_panel)
-        self.summary_scroll.setMinimumWidth(380)
+        self.summary_scroll.setMinimumWidth(300)
 
         self.voice_lab_scroll = self._wrap_scroll_area(self.voice_lab_panel)
 
         self.control_tabs = QTabWidget()
         self.control_tabs.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
         # Keep right rail tall but cap width to avoid bleeding into workspace
-        self.control_tabs.setMinimumWidth(380)
-        self.control_tabs.setMaximumWidth(550)
+        self.control_tabs.setMinimumWidth(300)
+        self.control_tabs.setMaximumWidth(360)
         self.control_tabs.addTab(self.summary_scroll, "🧭 Control Panel")
         self.control_tabs.addTab(self.voice_lab_scroll, "🎙️ Voice Lab")
 
@@ -361,6 +362,7 @@ class PodcastGeneratorWindow(QMainWindow):
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.setHandleWidth(8)
+        self.main_splitter.setMinimumWidth(960)
         # Left panel directly without scroll area
         self.main_splitter.addWidget(self.projects_panel)
         self.main_splitter.addWidget(self.content_splitter)
@@ -1272,6 +1274,18 @@ class PodcastGeneratorWindow(QMainWindow):
 
     def _restore_splitter_sizes(self) -> None:
         """Restore splitter sizes or fall back to defaults."""
+        def _restore_state(splitter: Optional[QSplitter], hex_value: str) -> bool:
+            if not splitter or not hex_value:
+                return False
+            try:
+                data = QByteArray.fromHex(hex_value.encode("ascii"))
+                if data.isEmpty():
+                    return False
+                return splitter.restoreState(data)
+            except Exception as exc:
+                self.logger.debug("Unable to restore splitter state: %s", exc)
+                return False
+
         def _apply_sizes(splitter: Optional[QSplitter], values: object) -> bool:
             if not splitter or not isinstance(values, (list, tuple)):
                 return False
@@ -1288,11 +1302,17 @@ class PodcastGeneratorWindow(QMainWindow):
         applied_main = _apply_sizes(self.main_splitter, getattr(self.settings, "main_splitter_sizes", []))
         applied_content = _apply_sizes(self.content_splitter, getattr(self.settings, "content_splitter_sizes", []))
 
+        # Prefer full state restore if available (includes handle positions)
+        if not applied_main:
+            applied_main = _restore_state(self.main_splitter, getattr(self.settings, "main_splitter_state", ""))
+        if not applied_content:
+            applied_content = _restore_state(self.content_splitter, getattr(self.settings, "content_splitter_state", ""))
+
         # If no explicit splitter sizes were stored, respect a persisted right panel width
         if not applied_content and hasattr(self, "content_splitter"):
             right_pref = getattr(self.settings, "right_panel_width", None)
             if isinstance(right_pref, (int, float)):
-                right_target = max(320, min(1200, int(right_pref)))
+                right_target = max(300, min(360, int(right_pref)))
                 sizes = self.content_splitter.sizes()
                 total = sum(sizes) or max(self.width(), right_target * 2)
                 left_target = max(220, total - right_target)
@@ -1308,7 +1328,7 @@ class PodcastGeneratorWindow(QMainWindow):
             left, right = sizes[0], sizes[1]
             total = sum(sizes) or 1
             # Only treat as invalid if clearly broken
-            return min(left, right) < 520 or total < 700
+            return min(left, right) < 240 or total < 500
 
         def _is_invalid_main_split() -> bool:
             if not self.main_splitter:
@@ -1330,14 +1350,14 @@ class PodcastGeneratorWindow(QMainWindow):
         """
         Prioritize the Center Workspace.
         Left Panel: small (~230px).
-        Right Panel: generous (~520px) for forms.
+        Right Panel: capped (~340px) for forms.
         Center Panel: takes remaining space.
         """
         total_width = self.width()
 
         # Define ideal widths for side panels
         left_width = 230
-        right_width = 520  # Enough for "Control Panel" inputs without dead space
+        right_width = 340  # Keep the right rail compact (max ~360px)
 
         # Calculate center
         center_width = total_width - left_width - right_width
@@ -1369,15 +1389,19 @@ class PodcastGeneratorWindow(QMainWindow):
 
         right_width = sizes[1]
         total = sum(sizes)
+        if total <= 0:
+            return
 
-        # Enforce a soft minimum to avoid the panel collapsing entirely
-        min_right = 520
-        if right_width < min_right and total > 0:
-            target_right = max(min_right, int(total * 0.35))
-            target_left = max(220, total - target_right)
-            self.content_splitter.setSizes([target_left, target_right])
-        elif total > 0 and right_width < int(total * 0.3):
-            target_right = max(min_right, int(total * 0.35))
+        min_right = 300
+        max_right = 360
+        target_right = right_width
+
+        if right_width < min_right:
+            target_right = min_right
+        elif right_width > max_right:
+            target_right = max_right
+
+        if target_right != right_width:
             target_left = max(220, total - target_right)
             self.content_splitter.setSizes([target_left, target_right])
 
@@ -1390,8 +1414,11 @@ class PodcastGeneratorWindow(QMainWindow):
             return
         total = sum(sizes) or 1
         right_width = sizes[1]
-        if right_width < 520:
-            target_right = max(520, int(total * 0.4))
+        min_right = 300
+        max_right = 360
+
+        if right_width < min_right or right_width > max_right:
+            target_right = max(min_right, min(max_right, int(total * 0.32)))
             target_left = max(240, total - target_right)
             self.content_splitter.setSizes([target_left, target_right])
 
@@ -1424,12 +1451,24 @@ class PodcastGeneratorWindow(QMainWindow):
 
         if getattr(self, "main_splitter", None):
             payload["main_splitter_sizes"] = self.main_splitter.sizes()
+            try:
+                state_bytes = self.main_splitter.saveState()
+                if not state_bytes.isEmpty():
+                    payload["main_splitter_state"] = bytes(state_bytes.toHex()).decode("ascii")
+            except Exception as exc:
+                self.logger.debug("Unable to capture main splitter state: %s", exc)
         if getattr(self, "content_splitter", None):
             content_sizes = self.content_splitter.sizes()
             payload["content_splitter_sizes"] = content_sizes
             if len(content_sizes) >= 2:
                 # Track right rail width explicitly for persistence
-                payload["right_panel_width"] = max(320, int(content_sizes[1]))
+                payload["right_panel_width"] = max(300, min(360, int(content_sizes[1])))
+            try:
+                c_state = self.content_splitter.saveState()
+                if not c_state.isEmpty():
+                    payload["content_splitter_state"] = bytes(c_state.toHex()).decode("ascii")
+            except Exception as exc:
+                self.logger.debug("Unable to capture content splitter state: %s", exc)
 
         if payload:
             self.settings.save_ui_preferences(payload)
