@@ -65,7 +65,7 @@ def build_summary_panel(
         QWidget containing the summary panel
     """
     panel = QWidget()
-    panel.setMinimumWidth(360)
+    panel.setMinimumWidth(400)
     layout = QVBoxLayout(panel)
     
     # Inputs card

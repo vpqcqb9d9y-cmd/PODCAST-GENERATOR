@@ -350,13 +350,14 @@ class PodcastGeneratorWindow(QMainWindow):
         self.control_tabs = QTabWidget()
         self.control_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         # Keep right rail wide enough to avoid crushed inputs
-        self.control_tabs.setMinimumWidth(360)
+        self.control_tabs.setMinimumWidth(400)
         self.control_tabs.addTab(self.summary_scroll, "🧭 Control Panel")
         self.control_tabs.addTab(self.voice_lab_scroll, "🎙️ Voice Lab")
         self.content_splitter.addWidget(self.workspace_scroll)
         self.content_splitter.addWidget(self.control_tabs)
-        self.content_splitter.setStretchFactor(0, 1)
-        self.content_splitter.setStretchFactor(1, 0)
+        # Give the right rail a guaranteed share so it doesn't collapse
+        self.content_splitter.setStretchFactor(0, 3)
+        self.content_splitter.setStretchFactor(1, 2)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
@@ -1283,7 +1284,7 @@ class PodcastGeneratorWindow(QMainWindow):
             left, right = sizes[0], sizes[1]
             total = sum(sizes) or 1
             # Only treat as invalid if clearly broken
-            return min(left, right) < 260 or total < 400
+            return min(left, right) < 340 or total < 400
 
         def _is_invalid_main_split() -> bool:
             if not self.main_splitter:
@@ -1345,10 +1346,10 @@ class PodcastGeneratorWindow(QMainWindow):
         total = sum(sizes)
 
         # Enforce a soft minimum to avoid the panel collapsing entirely
-        min_right = 340
+        min_right = 360
         if right_width < min_right and total > 0:
-            target_right = 360
-            target_left = max(180, total - target_right)
+            target_right = max(min_right, int(total * 0.32))
+            target_left = max(200, total - target_right)
             self.content_splitter.setSizes([target_left, target_right])
 
     def _schedule_layout_save(self) -> None:
