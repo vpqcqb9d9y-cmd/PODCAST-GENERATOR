@@ -4,6 +4,7 @@ src/audio/__init__.py
 src/audio/elevenlabs_tts.py
 src/audio/stitcher.py
 src/audio/tts.py
+src/audio/voice_manager.py
 src/azure_podcast_generator.egg-info/PKG-INFO
 src/azure_podcast_generator.egg-info/SOURCES.txt
 src/azure_podcast_generator.egg-info/dependency_links.txt
@@ -28,6 +29,7 @@ src/gui/dialogs/quality_report.py
 src/gui/dialogs/visual_settings.py
 src/gui/dialogs/voice_selector.py
 src/gui/panels/__init__.py
+src/gui/panels/control_panel.py
 src/gui/panels/projects.py
 src/gui/panels/summary.py
 src/gui/panels/workspace.py
@@ -44,6 +46,7 @@ src/utils/__init__.py
 src/utils/config.py
 src/utils/content_classifier.py
 src/utils/costs.py
+src/utils/guardian.py
 src/utils/history.py
 src/utils/logging.py
 src/utils/quality_checker.py
@@ -53,10 +56,13 @@ src/utils/voices.py
 src/visuals/__init__.py
 src/visuals/google_ai_visuals.py
 src/visuals/manim_generator.py
+src/visuals/subtitle_generator.py
 src/visuals/video_composer.py
 tests/test_chunker.py
 tests/test_elevenlabs_overrides.py
 tests/test_google_ai_visuals.py
+tests/test_pipeline_video.py
+tests/test_quality_checker.py
 tests/test_run_paths.py
 tests/test_video_composer.py
 tests/test_workers.py

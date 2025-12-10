@@ -46,12 +46,21 @@ class ProductionGuardian:
         self,
         metadata: Optional[Dict] = None,
         visual_metadata: Optional[Dict] = None,
+        extra_assets: Optional[List[Path]] = None,
     ) -> GuardianResult:
         visuals_dir = self.run_paths.visuals_dir
         visuals_dir.mkdir(parents=True, exist_ok=True)
 
         expected_images = self._expected_image_count()
-        valid_images = self._validate_images(list(visuals_dir.glob("*.png")) + list(visuals_dir.glob("*.jpg")) + list(visuals_dir.glob("*.jpeg")))
+
+        extra_assets = extra_assets or []
+        image_candidates = list(visuals_dir.glob("*.png")) + list(visuals_dir.glob("*.jpg")) + list(visuals_dir.glob("*.jpeg"))
+        image_candidates.extend([p for p in extra_assets if p.suffix.lower() in {".png", ".jpg", ".jpeg"}])
+        valid_images = self._validate_images(image_candidates)
+
+        video_candidates = list(visuals_dir.glob("*.mp4")) + list(visuals_dir.glob("*.mov")) + list(visuals_dir.glob("*.webm"))
+        video_candidates.extend([p for p in extra_assets if p.suffix.lower() in {".mp4", ".mov", ".webm"}])
+        video_assets: List[Path] = sorted(set(video_candidates))
 
         # One retry: attempt regeneration when we have fewer images than requested.
         if len(valid_images) < expected_images:
@@ -71,7 +80,7 @@ class ProductionGuardian:
         audio_normalized = self._normalize_audio()
 
         return GuardianResult(
-            assets=valid_images,
+            assets=sorted(set(valid_images + video_assets)),
             adaptive_timeline=adaptive,
             ken_burns=True,
             audio_normalized=audio_normalized,

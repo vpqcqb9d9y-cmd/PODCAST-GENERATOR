@@ -316,6 +316,8 @@ class VideoComposer:
         # More robust file detection
         video_files: List[Path] = []
         image_files: List[Path] = []
+        raw_image_files: List[Path] = []
+        prioritized_images: List[Path] = []
 
         allow_placeholders = not adaptive_timeline
 
@@ -323,6 +325,7 @@ class VideoComposer:
             existing = [p for p in asset_paths if p and p.exists()]
             video_files = [p for p in existing if p.suffix.lower() in self.VIDEO_EXTENSIONS]
             prioritized_images = [p for p in existing if p.suffix.lower() in self.IMAGE_EXTENSIONS]
+            raw_image_files = list(prioritized_images)
         else:
             for ext in self.VIDEO_EXTENSIONS:
                 video_files.extend(list(animations_dir.glob(f"*{ext}")))
@@ -365,6 +368,16 @@ class VideoComposer:
             metadata=metadata,
             allow_placeholders=allow_placeholders,
         )
+
+        # Surface missing visuals explicitly when images were requested
+        if required_image_count > 0 and len(image_files) == 0:
+            warn_msg = (
+                f"No generated images available (requested {required_image_count}). "
+                "Falling back to slide-style visuals."
+            )
+            self.logger.warning(warn_msg)
+            if run_paths:
+                run_paths.log(f"⚠ {warn_msg}")
 
         if adaptive_timeline and run_paths:
             run_paths.log("Adaptive timeline: stretching available visuals (no placeholders).")
@@ -684,6 +697,24 @@ class VideoComposer:
         adaptive_timeline: bool = False,
         apply_ken_burns: bool = True,
     ) -> Path:
+        # In production mode, block rendering if only placeholders are present
+        if not getattr(self.settings, "preview_mode", False):
+            visuals_dir = getattr(run_paths, "visuals_dir", None)
+            if visuals_dir and visuals_dir.exists():
+                placeholders = list(visuals_dir.glob("placeholder_*.png"))
+                real_assets = [
+                    p for p in visuals_dir.glob("*")
+                    if p.suffix.lower() in self.IMAGE_EXTENSIONS and not p.name.startswith("placeholder_")
+                ]
+                if placeholders and not real_assets:
+                    message = (
+                        "Placeholder visuals detected with no real assets. "
+                        "Aborting render (preview_mode is disabled)."
+                    )
+                    self.logger.error(message)
+                    if hasattr(run_paths, "log"):
+                        run_paths.log(message)
+                    raise RuntimeError(message)
         # AGGRESSIVE CLEANUP: If image_01.png exists, DELETE placeholder_01.png
         run_dir = run_paths.run_dir
         for i in range(1, 20):
@@ -694,16 +725,39 @@ class VideoComposer:
                 os.remove(placeholder)
 
         start = time.perf_counter()
-        clips = self.create_timeline(
-            dialogue_json,
-            metadata,
-            run_paths.final_audio_path,
-            run_paths.visuals_dir,
-            run_paths,
-            asset_paths=asset_paths,
-            adaptive_timeline=adaptive_timeline,
-            apply_ken_burns=apply_ken_burns,
-        )
+        try:
+            clips = self.create_timeline(
+                dialogue_json,
+                metadata,
+                run_paths.final_audio_path,
+                run_paths.visuals_dir,
+                run_paths,
+                asset_paths=asset_paths,
+                adaptive_timeline=adaptive_timeline,
+                apply_ken_burns=apply_ken_burns,
+            )
+        except Exception as exc:
+            self.logger.error(
+                "[VideoComposer] Timeline creation failed; using slide fallback: %s",
+                exc,
+                exc_info=True,
+            )
+            if run_paths:
+                run_paths.log(f"Timeline creation failed; using slide fallback: {exc}")
+
+            try:
+                audio_clip = AudioFileClip(str(run_paths.final_audio_path))
+                total_duration = audio_clip.duration
+                audio_clip.close()
+            except Exception as audio_exc:
+                self.logger.error(
+                    "[VideoComposer] Failed to read audio duration for fallback: %s",
+                    audio_exc,
+                    exc_info=True,
+                )
+                total_duration = 0
+
+            clips = self._build_slide_clips(dialogue_json, metadata, total_duration)
         output = self.render_final_video(
             clips,
             run_paths.final_audio_path,

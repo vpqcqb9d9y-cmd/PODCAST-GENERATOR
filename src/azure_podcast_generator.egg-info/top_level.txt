@@ -6,4 +6,3 @@ outputs
 pipeline
 utils
 visuals
-voices

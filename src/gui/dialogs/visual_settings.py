@@ -469,6 +469,7 @@ class VisualSettingsDialog(QDialog):
         # Auto duration checkbox with clear styling
         auto_row = QHBoxLayout()
         self.auto_duration_cb = QCheckBox("✅ משך אוטומטי (לפי האודיו)")
+        self.auto_duration_cb.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.auto_duration_cb.setChecked(getattr(self.settings, 'auto_video_duration', True))
         self.auto_duration_cb.setStyleSheet("""
             QCheckBox {

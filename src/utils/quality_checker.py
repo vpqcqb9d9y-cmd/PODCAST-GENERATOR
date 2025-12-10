@@ -1084,6 +1084,12 @@ class QualityChecker:
             "videos_count": len(video_files),
             "total_visuals": len(image_files) + len(video_files)
         })
+        # Track requested visuals from settings for sanity comparison
+        try:
+            requested_images = int(getattr(self.settings, "image_count", 0) or 0)
+        except Exception:
+            requested_images = 0
+        details["requested_images"] = requested_images
 
         # Check for visual metadata
         visual_metadata_path = run_dir / "visual_metadata.json"
@@ -1097,6 +1103,10 @@ class QualityChecker:
         if image_issues:
             issues.extend(image_issues)
         details.update(image_details)
+
+        # Explicitly flag missing visuals when images were requested
+        if requested_images > 0 and len(image_files) == 0:
+            issues.append(f"Requested {requested_images} image(s) but 0 were generated")
 
         # Check video file
         final_video = run_dir / "lecture_2025-12-03_summary.mp4"  # Generic name check
@@ -1238,8 +1248,9 @@ class QualityChecker:
         try:
             import cv2  # type: ignore
         except ImportError as exc:
-            self.logger.warning("OpenCV (cv2) not available for quality checks: %s", exc)
-            return None
+            message = "OpenCV (cv2) is required for quality validation. Install opencv-python."
+            self.logger.critical(message)
+            raise RuntimeError(message) from exc
         return cv2
 
     def _check_image_quality(self, image_files: List[Path]) -> Tuple[List[str], Dict[str, Any]]:

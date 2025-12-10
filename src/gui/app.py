@@ -3445,6 +3445,18 @@ class PodcastGeneratorWindow(QMainWindow):
             self.logger.warning("[Visual Metadata] Failed to cache metadata: %s", exc)
             return None
 
+    def _set_visual_metadata_loaded(self, source: Optional[Path] = None) -> None:
+        """Mark the UI to show that visual metadata was loaded from disk."""
+        label = getattr(self, "visual_meta_status", None)
+        if label:
+            label.setText("✅ Visual Metadata Loaded")
+            label.setStyleSheet("color: #16a34a; font-weight: 600;")
+        if source:
+            try:
+                self._append_log(f"Visual metadata loaded from {source.name}")
+            except Exception:
+                pass
+
     def _ensure_visual_metadata_ready(self, output_dir: Path) -> None:
         """
         Ensure that visual_metadata.json sits next to the metadata temp file before running the pipeline.
@@ -4653,6 +4665,16 @@ class PodcastGeneratorWindow(QMainWindow):
             if run_path.exists():
                 # Pass the original history entry to preserve transcript_path and other fields
                 self._load_project_from_directory(run_path, silent=silent, history_entry=entry)
+                if not getattr(self, "current_metadata", None):
+                    try:
+                        meta_path = run_path / "metadata.json"
+                        if meta_path.exists():
+                            self.current_metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+                            self.chat_session.import_metadata(self.current_metadata)
+                            self._update_metadata_preview()
+                            self.logger.info("[_apply_history_entry] Rehydrated metadata.json directly from disk.")
+                    except Exception as meta_exc:
+                        self.logger.warning("[_apply_history_entry] Failed to rehydrate metadata: %s", meta_exc)
                 self._update_output_gallery(entry)
             else:
                 self.logger.error("[_apply_history_entry] Directory not found: %s", run_dir)
@@ -4805,16 +4827,33 @@ class PodcastGeneratorWindow(QMainWindow):
         """
         start_time = time.time()
         load_error: Optional[str] = None
+        # Reset cached visual metadata before loading a new project
+        self._latest_visual_metadata = None
+        self._latest_visual_metadata_path = None
         self.logger.info("[_load_project_from_directory] Loading project from: %s", run_dir)
         self.logger.debug("[_load_project_from_directory] silent=%s, history_entry=%s", 
                          silent, "provided" if history_entry else "None")
         
         try:
             metadata_file = run_dir / "metadata.json"
+            gui_metadata_file = run_dir / "_gui_metadata.json"
+            visual_metadata_file = run_dir / "visual_metadata.json"
             metadata = None
+            loaded_visual_metadata: Optional[Dict] = None
             
+            # Prefer GUI metadata snapshot if present
+            if gui_metadata_file.exists():
+                try:
+                    metadata = json.loads(gui_metadata_file.read_text(encoding="utf-8"))
+                    self.logger.info(
+                        "[_load_project_from_directory] Loaded _gui_metadata.json from %s", gui_metadata_file
+                    )
+                except json.JSONDecodeError as exc:
+                    load_error = f"Failed to parse _gui_metadata.json: {exc}"
+                    self.logger.error("[_load_project_from_directory] %s", load_error)
+                    raise
             # Try to load metadata.json if it exists
-            if metadata_file.exists():
+            elif metadata_file.exists():
                 try:
                     metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
                     self.logger.debug("[_load_project_from_directory] Metadata loaded: topic=%s", 
@@ -4893,6 +4932,18 @@ class PodcastGeneratorWindow(QMainWindow):
                     if not metadata.get(key) and history_entry.get(key):
                         metadata[key] = history_entry.get(key)
                         self.logger.debug("[_load_project_from_directory] Filled missing %s from history", key)
+
+            # Load existing visual metadata if present; do not regenerate/overwrite
+            if visual_metadata_file.exists():
+                try:
+                    loaded_visual_metadata = json.loads(visual_metadata_file.read_text(encoding="utf-8"))
+                    self._latest_visual_metadata = loaded_visual_metadata
+                    self._latest_visual_metadata_path = visual_metadata_file
+                    self.logger.info("[_load_project_from_directory] Loaded visual_metadata.json from %s", visual_metadata_file)
+                except json.JSONDecodeError as exc:
+                    load_error = f"Failed to parse visual_metadata.json: {exc}"
+                    self.logger.error("[_load_project_from_directory] %s", load_error)
+                    raise
             
             entry = self._build_history_entry(run_dir, metadata)
             
@@ -4910,6 +4961,10 @@ class PodcastGeneratorWindow(QMainWindow):
             self.chat_session.import_metadata(metadata)
             self._update_metadata_preview()
             self._apply_chat_preferences()
+
+            # Update UI to indicate visual metadata was loaded from disk
+            if loaded_visual_metadata:
+                self._set_visual_metadata_loaded(visual_metadata_file)
             
             # Auto-fill custom_project_name field with project name
             if hasattr(self, "custom_project_name"):

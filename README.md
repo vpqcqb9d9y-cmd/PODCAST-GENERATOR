@@ -237,6 +237,9 @@ Create short animated scenes for educational content.
 
 ## Troubleshooting
 
+- **Hybrid visuals (Imagen + Manim)**: `VISUAL_GENERATOR=hybrid` now merges Google Imagen stills with local Manim clips into one timeline. No extra flags needed—both asset types are passed to the composer automatically.
+- **PPTX text-only fallback**: Slide export now succeeds even when zero visuals are generated (e.g., API outage). The deck renders with text-only slides instead of failing.
+- **Stability fixes**: Resolved an `UnboundLocalError` in video composition when visuals are missing, and the Import Project flow now rehydrates `metadata.json` from disk to restore UI state reliably.
 - **Use the launcher**: Always start the app via `launch_gui.bat` to ensure the virtual environment and dependencies load correctly. The script keeps the window open on errors so you can read them.
 - **Imagen 4 safety settings**: Vertex AI requires `block_low_and_above` safety thresholds. If you see `400 INVALID_ARGUMENT ... Only block_low_and_above is supported for safetySetting`, update to the latest code and ensure your environment uses `IMAGEN_MODEL=imagen-4.0-generate-001`.
 - **Models**: Defaults are `IMAGEN_MODEL=imagen-4.0-generate-001` and `VEO_MODEL=veo-2.0-generate-001`. Override in `.env` as needed.

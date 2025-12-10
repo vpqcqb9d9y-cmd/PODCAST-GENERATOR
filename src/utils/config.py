@@ -119,6 +119,8 @@ class Settings:
     voice_selector_geometry: str = field(default_factory=lambda: "")
     main_window_geometry: str = field(default_factory=lambda: "")
     main_window_state: str = field(default_factory=lambda: "")
+    main_splitter_state: str = field(default_factory=lambda: "")
+    content_splitter_state: str = field(default_factory=lambda: "")
     right_panel_width: int = field(default_factory=lambda: 520)
     main_splitter_sizes: List[int] = field(default_factory=list)
     content_splitter_sizes: List[int] = field(default_factory=list)

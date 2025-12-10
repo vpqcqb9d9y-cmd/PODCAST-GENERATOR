@@ -15,6 +15,7 @@ from ..utils import CostTracker, HistoryManager, RunPaths, Settings, VoiceProfil
 from ..utils.guardian import ProductionGuardian
 from ..utils.visual_metadata_builder import build_visual_metadata_locally, generate_universal_visual_metadata
 from ..visuals import ManimSceneGenerator, VideoComposer, GoogleAIVisualGenerator
+from moviepy.editor import AudioFileClip
 
 try:
     from ..audio.elevenlabs_tts import ElevenLabsQuotaExceededError
@@ -547,11 +548,31 @@ class LecturePipeline:
                     run_type=run_type,
                 )
                 guardian = ProductionGuardian(run_paths, self.settings, guardian_report)
+                # Collect all discovered assets so guardian can merge them (images + manim clips)
+                base_assets: List[Path] = []
+                base_assets.extend(ai_visuals)
+                base_assets.extend(scene_paths)
+
                 guardian_result = guardian.optimize_and_fix(
                     metadata=metadata,
                     visual_metadata=visual_metadata,
+                    extra_assets=base_assets,
                 )
-                optimized_assets = guardian_result.assets
+
+                # Merge guardian-vetted assets with raw AI/Manim outputs (dedup)
+                merged_assets: List[Path] = []
+                for asset in list(guardian_result.assets) + base_assets:
+                    if not asset:
+                        continue
+                    try:
+                        resolved = asset.resolve()
+                    except Exception:
+                        resolved = asset
+                    if resolved.exists() and resolved not in merged_assets:
+                        merged_assets.append(resolved)
+
+                optimized_assets = merged_assets
+                run_paths.log(f"Visual assets prepared for composition: {len(optimized_assets)} item(s).")
                 if guardian_result.adaptive_timeline:
                     run_paths.log("ProductionGuardian: Adaptive timeline enabled (stretching available visuals).")
                 if guardian_result.audio_normalized:
@@ -579,10 +600,46 @@ class LecturePipeline:
                     self.logger.info("[LecturePipeline.run] Video composition successful: %s", 
                                    run_paths.final_video_path.name)
                 except Exception as exc:
-                    self.logger.error("[LecturePipeline.run] Video composition failed: %s\n%s", 
-                                     exc, traceback.format_exc())
-                    run_paths.log(f"Video composition failed: {exc}")
-                    raise
+                    self.logger.error(
+                        "[LecturePipeline.run] Recoverable video composition error: %s\n%s",
+                        exc,
+                        traceback.format_exc(),
+                    )
+                    run_paths.log(f"Recoverable video composition error: {exc} — switching to slide fallback")
+
+                    # Trigger QualityChecker to log/attempt healing insights
+                    try:
+                        qc = QualityChecker(self.settings)
+                        qc.run_postprocess_checks(
+                            run_dir=run_paths.run_dir,
+                            expected_segments=expected_segments,
+                            run_type=run_type,
+                        )
+                    except Exception as qc_exc:
+                        self.logger.warning("[LecturePipeline.run] QualityChecker fallback failed: %s", qc_exc)
+                        run_paths.log(f"QualityChecker fallback failed: {qc_exc}")
+
+                    # Slide fallback to ensure an output is produced
+                    try:
+                        with AudioFileClip(str(run_paths.final_audio_path)) as ac:
+                            total_duration = ac.duration
+                        slide_clips = self.video._build_slide_clips(dialogue_json, metadata, total_duration)
+                        self.video.render_final_video(
+                            slide_clips,
+                            run_paths.final_audio_path,
+                            run_paths.final_video_path,
+                            dialogue_json=dialogue_json,
+                        )
+                        run_paths.log(f"Fallback slide video rendered to {run_paths.final_video_path}")
+                        self.logger.info("[LecturePipeline.run] Fallback slide video rendered (anti-fragile path).")
+                    except Exception as fallback_exc:
+                        self.logger.error(
+                            "[LecturePipeline.run] Fallback slide rendering failed: %s\n%s",
+                            fallback_exc,
+                            traceback.format_exc(),
+                        )
+                        run_paths.log(f"Fallback slide rendering failed: {fallback_exc}")
+                        raise
                     
                 self._stage_times["video_composition"] = time.time() - stage_start
                 timing.checkpoint("video_composition")
