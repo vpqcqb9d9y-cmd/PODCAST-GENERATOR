@@ -118,6 +118,7 @@ M.B.S Studio ingests a raw transcript (±30K words), enriches it with AI-driven 
 - **Dual TTS Support**: Azure Neural TTS (fast & affordable) or ElevenLabs (natural voices, 30+ options).
 - **ElevenLabs Voice Selector**: Browse and preview 30+ voices with real-time provider switching.
 - **Visual Model Selector**: Pick Imagen 4 (standard/fast) per run; deprecated Imagen 3 fast auto-migrates to Imagen 4.
+- **Visuals**: Powered exclusively by **Google Imagen 4** (Ultra High Quality).
 - **Production Guardian (NEW)**: Auto-heals visuals, removes black frames, normalizes audio loudness, and applies Ken Burns to static images before final render.
 
 ### Visual Generation (NEW v2.6.1)

@@ -102,53 +102,29 @@ class GoogleAIVisualGenerator:
             return
         
         try:
-            try:
-                import google.generativeai as genai  # type: ignore
-                genai.configure(api_key=self.settings.gemini_api_key)
-            except Exception:
-                pass
-
-            # Try the new google.genai Client API first (supports Imagen 3)
-            try:
-                from google import genai  # type: ignore
-                from google.genai import types  # type: ignore
-                
-                self._genai_client = genai.Client(api_key=self.settings.gemini_api_key)
-                self._genai_types = types
-                
-                imagen_model = getattr(self.settings, 'imagen_model', 'imagen-3.0-generate-001')
-                self._imagen_model = imagen_model
-                self._imagen_client = self._genai_client
-                self.logger.info("Initialized Google AI Client with Imagen model: %s", imagen_model)
-                
-                # VEO initialization
-                veo_model = getattr(self.settings, 'veo_model', 'veo-2.0-generate-001')
-                self._veo_model = veo_model
-                self._veo_client = self._genai_client
-                self.logger.info("Initialized Google AI Client with VEO model: %s", veo_model)
-                
-            except ImportError:
-                # Fall back to legacy google.generativeai if new API not available
-                import google.generativeai as genai  # type: ignore
-                genai.configure(api_key=self.settings.gemini_api_key)
-                
-                self._genai_client = None
-                self._genai_types = None
-                
-                imagen_model = getattr(self.settings, 'imagen_model', 'imagen-3.0-generate-001')
-                self._imagen_model = imagen_model
-                self._imagen_client = genai
-                self.logger.info("Initialized legacy Google AI with Imagen model: %s", imagen_model)
-                
-                veo_model = getattr(self.settings, 'veo_model', 'veo-2.0-generate-001')
-                self._veo_model = veo_model
-                self._veo_client = genai
-                self.logger.info("Initialized legacy Google AI with VEO model: %s", veo_model)
+            from google import genai  # type: ignore
+            from google.genai import types  # type: ignore
+            
+            self._genai_client = genai.Client(api_key=self.settings.gemini_api_key)
+            self._genai_types = types
+            
+            # Enforce Imagen 4 only
+            self._imagen_model = "imagen-4.0-generate-001"
+            self._imagen_client = self._genai_client
+            self.logger.info("Initialized Google AI Client with Imagen model: %s", self._imagen_model)
+            
+            # VEO initialization
+            veo_model = getattr(self.settings, 'veo_model', 'veo-2.0-generate-001')
+            self._veo_model = veo_model
+            self._veo_client = self._genai_client
+            self.logger.info("Initialized Google AI Client with VEO model: %s", veo_model)
             
         except ImportError:
-            self.logger.error("google-generativeai package not installed. Run: pip install google-generativeai")
+            self.logger.error("google-genai package not installed. Run: pip install google-genai")
+            raise
         except Exception as exc:
             self.logger.error("Failed to initialize Google AI clients: %s", exc)
+            raise
     
     @property
     def is_available(self) -> bool:
@@ -385,8 +361,18 @@ class GoogleAIVisualGenerator:
         width, height = aspect_map.get(aspect_ratio, (1920, 1080))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        placeholder_reason: Optional[str] = None
+        # Enforce Imagen 4 only per directive
+        if "imagen-4.0" not in str(getattr(self, "_imagen_model", "")):
+            raise RuntimeError(f"Imagen model must be imagen-4.0; got {getattr(self, '_imagen_model', 'unset')}")
+
         try:
+            def _write_bytes(data: bytes) -> Path:
+                with open(output_path, 'wb') as f:
+                    f.write(data)
+                if (not output_path.exists()) or output_path.stat().st_size == 0:
+                    raise ValueError("File write failed")
+                return output_path
+
             if getattr(self, "_genai_client", None):
                 attempts = 2
                 for attempt in range(1, attempts + 1):
@@ -405,11 +391,25 @@ class GoogleAIVisualGenerator:
                                 aspect_ratio=aspect_ratio,
                             ),
                         )
+                        self.logger.info("DEBUG RESPONSE DIR: %s", dir(result))
+                        # Debug response structure for Imagen 4
                         if result and hasattr(result, 'generated_images') and result.generated_images:
                             image_data = result.generated_images[0]
+                            self.logger.info(
+                                "DEBUG GENERATED_IMAGE STRUCTURE: %s",
+                                dir(image_data),
+                            )
+                            # Try multiple extraction paths for Imagen 4
                             if hasattr(image_data, 'image') and hasattr(image_data.image, 'image_bytes'):
-                                with open(output_path, 'wb') as f:
-                                    f.write(image_data.image.image_bytes)
+                                _write_bytes(image_data.image.image_bytes)
+                                self.logger.info("✅ Imagen generated image: %s", output_path)
+                                return output_path
+                            if hasattr(image_data, 'image_bytes'):
+                                _write_bytes(image_data.image_bytes)
+                                self.logger.info("✅ Imagen generated image: %s", output_path)
+                                return output_path
+                            if hasattr(image_data, 'bytes'):
+                                _write_bytes(image_data.bytes)
                                 self.logger.info("✅ Imagen generated image: %s", output_path)
                                 return output_path
                             if hasattr(image_data, 'image'):
@@ -418,61 +418,39 @@ class GoogleAIVisualGenerator:
                                     pil_image._pil_image.save(str(output_path), quality=95)
                                 else:
                                     pil_image.save(str(output_path), quality=95)
+                                if (not output_path.exists()) or output_path.stat().st_size == 0:
+                                    raise ValueError("File write failed")
                                 self.logger.info("✅ Imagen generated image: %s", output_path)
                                 return output_path
-                            placeholder_reason = "Unexpected Imagen response format"
-                            self.logger.warning(placeholder_reason)
+                            # Last-resort dict-like handling
+                            if isinstance(image_data, dict):
+                                possible = (
+                                    image_data.get("image_bytes")
+                                    or image_data.get("bytes")
+                                    or image_data.get("image", {}).get("image_bytes")
+                                )
+                                if possible:
+                                    _write_bytes(possible)
+                                    self.logger.info("✅ Imagen generated image: %s", output_path)
+                                    return output_path
+                            raise ValueError(f"Unexpected Imagen response format: {dir(image_data)}")
                         else:
-                            placeholder_reason = "Imagen API returned no images"
-                            self.logger.warning(placeholder_reason)
+                            raise ValueError("Imagen API returned no images")
                     except Exception as exc:
-                        placeholder_reason = f"{exc.__class__.__name__}: {exc}"
-                        self.logger.warning(
-                            "Imagen API attempt %d/%d failed: %s",
+                        # Log full traceback so upstream callers can diagnose (e.g., numpy/cv2 failures)
+                        self.logger.exception(
+                            "Imagen API attempt %d/%d failed",
                             attempt,
                             attempts,
-                            placeholder_reason,
                         )
                         time.sleep(min(1.5, 0.7 * attempt))
-                self.logger.warning("Imagen API failed after %d attempts; falling back to placeholder", attempts)
-            elif self._imagen_client:
-                # Prefer dedicated model class if available
-                if hasattr(self._imagen_client, "ImageGenerationModel"):
-                    success, placeholder_reason = self._try_generate_image_legacy(
-                        prompt=prompt,
-                        output_path=output_path,
-                        num_images=num_images,
-                        aspect_ratio=aspect_ratio,
-                    )
-                    if success:
-                        return output_path
-                elif hasattr(self._imagen_client, "generate_images"):
-                    success, placeholder_reason = self._try_generate_image_functional(
-                        prompt=prompt,
-                        output_path=output_path,
-                        num_images=num_images,
-                        aspect_ratio=aspect_ratio,
-                    )
-                    if success:
-                        return output_path
-                else:
-                    placeholder_reason = "Imagen legacy client lacks image API – install google-genai or upgrade google-generativeai>=0.6.0"
+                raise RuntimeError(f"Imagen API failed after {attempts} attempts for model {self._imagen_model}")
             else:
-                placeholder_reason = "Google AI client not initialized"
+                raise RuntimeError("Google AI client not initialized for Imagen 4 generation")
         except Exception as exc:
-            placeholder_reason = f"{exc.__class__.__name__}: {exc}"
-            self.logger.warning("Imagen generation raised exception: %s", placeholder_reason)
-        
-        # Fallback: Generate professional placeholder image
-        try:
-            self._generate_educational_placeholder(prompt, output_path, (width, height))
-            if hasattr(self, '_record_placeholder_event'):
-                self._record_placeholder_event(output_path, prompt, placeholder_reason or "Imagen unavailable")
-            self.logger.info("Generated educational placeholder: %s", output_path)
-            return output_path
-        except Exception as exc:
-            self.logger.error("Image generation failed completely: %s", exc)
-            return None
+            # Surface full traceback instead of silent fail
+            self.logger.exception("Imagen generation raised exception")
+            raise
 
     def _try_generate_image_legacy(
         self,
@@ -511,7 +489,7 @@ class GoogleAIVisualGenerator:
                 return True, None
             return False, "Imagen legacy API returned no images"
         except Exception as exc:
-            self.logger.warning("Imagen legacy API failed: %s", exc)
+            self.logger.exception("Imagen legacy API failed")
             return False, f"{exc.__class__.__name__}: {exc}"
 
     def _try_generate_image_functional(
@@ -551,7 +529,7 @@ class GoogleAIVisualGenerator:
                 return True, None
             return False, "Imagen functional API returned no images"
         except Exception as exc:
-            self.logger.warning("Imagen functional API failed: %s", exc)
+            self.logger.exception("Imagen functional API failed")
             return False, f"{exc.__class__.__name__}: {exc}"
     
     def _generate_video(
@@ -1008,6 +986,7 @@ class GoogleAIVisualGenerator:
                     self.logger.info("[IMAGE %d] ✅ Generated: %s", img_index, result.name)
                 else:
                     self.logger.warning("[IMAGE %d] ❌ Failed to generate", img_index)
+                    run_paths.log(f"[Image {img_index}] Failed to generate (check logs for traceback)")
             
             self.logger.info("=" * 60)
             capped_total = max_images if max_images is not None else len(images)
