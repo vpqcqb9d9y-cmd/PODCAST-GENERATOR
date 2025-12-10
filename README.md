@@ -2,7 +2,7 @@
 
 > Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos inspired by Google NotebookLM.
 >
-> Current version: **v3.2.0**
+> Current version: **v3.2.1**
 
 Looking for the full Hebrew documentation? Jump to the localized guide in [README.he.md](README.he.md) or scroll down to the “מדריך בעברית” section retained below.
 
