@@ -69,7 +69,11 @@ class SpeechSynthesizer:
         language = detect_language(text)
         voice = self.voice_profile.get_voice(speaker, language)
         if not voice:
-            voice = self.VOICE_MAP.get(speaker, self.VOICE_MAP["Roee"])
+            # Prefer user-selected Azure default voice when available
+            fallback_voice = getattr(self.settings, "azure_default_voice", "") or self.VOICE_MAP.get(
+                speaker, self.VOICE_MAP["Roee"]
+            )
+            voice = fallback_voice
         self.speech_config.speech_synthesis_voice_name = voice
         audio_config = speechsdk.audio.AudioOutputConfig(filename=str(target))
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=self.speech_config, audio_config=audio_config)

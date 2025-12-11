@@ -27,6 +27,7 @@ class Settings:
     speech_key: str = ""
     speech_region: str = ""
     speech_endpoint: str = ""
+    azure_default_voice: str = field(default_factory=lambda: os.getenv("AZURE_DEFAULT_VOICE", "he-IL-AvriNeural"))
 
     output_base_dir: Path = field(default_factory=lambda: Path(os.getenv("OUTPUT_BASE_DIR", "outputs")))
     intro_music: Path = field(default_factory=lambda: Path(os.getenv("INTRO_MUSIC", "assets/audio/intro.mp3")))
@@ -155,6 +156,7 @@ class Settings:
             speech_key=os.getenv("AZURE_SPEECH_KEY", ""),
             speech_region=os.getenv("AZURE_SPEECH_REGION", ""),
             speech_endpoint=os.getenv("AZURE_SPEECH_ENDPOINT", ""),
+            azure_default_voice=os.getenv("AZURE_DEFAULT_VOICE", "he-IL-AvriNeural"),
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
             imagen_model=os.getenv("IMAGEN_MODEL", "imagen-4.0-generate-001"),
@@ -232,6 +234,7 @@ class Settings:
             "visual_settings_geometry",
             "voice_selector_geometry",
             "elevenlabs_voice_overrides",
+            "azure_default_voice",
             "metadata_system_prompt",
             "visual_metadata_system_prompt",
             "main_window_geometry",
@@ -348,6 +351,7 @@ class Settings:
             "visual_settings_geometry",
             "voice_selector_geometry",
             "elevenlabs_voice_overrides",
+            "azure_default_voice",
             "visual_metadata_system_prompt",
             "main_window_geometry",
             "main_window_state",

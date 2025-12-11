@@ -55,7 +55,12 @@ def build_control_panel(
     parent.transcript_edit.setPlaceholderText("בחר קובץ .txt או .srt")
     transcript_btn = QPushButton("בחר תמלול")
     transcript_btn.setToolTip("פתח בחירת קובץ תמלול (TXT/SRT).")
-    transcript_btn.clicked.connect(lambda: parent._pick_file(parent.transcript_edit))
+    transcript_btn.clicked.connect(
+        lambda: parent._pick_file(
+            parent.transcript_edit,
+            "Text Files (*.txt *.srt *.vtt *.md)",
+        )
+    )
     inputs_layout.addLayout(inline_row("תמלול", parent.transcript_edit, transcript_btn))
     inputs_layout.addWidget(helper_label("קובץ הטקסט/תמלול שממנו יבנה הפודקאסט."))
 

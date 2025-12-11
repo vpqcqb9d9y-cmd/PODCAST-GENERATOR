@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 import traceback
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -81,6 +82,7 @@ from PyQt6.QtWidgets import (
 
 # Internal imports from extracted modules
 from src.metadata import MetadataChatSession
+from src.metadata.chat import _default_metadata
 from src.outputs import NetworkMapExporter, SlideDeckExporter, StoryExporter
 from src.utils import HistoryManager, Settings, VoiceProfileManager, validate_history_entry_paths, get_valid_run_dir
 from src.utils.storage import _slugify
@@ -255,6 +257,10 @@ class PodcastGeneratorWindow(QMainWindow):
         self.seed_worker: Optional[MetadataSeedWorker] = None
         self._chat_busy_counter = 0
         self._active_transcript: Optional[str] = None
+        self.current_transcript_path: Optional[Path] = None
+        self.current_project_path: Optional[Path] = None
+        self.uploaded_documents: List[Path] = []
+        self._custom_project_name_autofill_enabled: bool = True
         self.current_metadata = self.chat_session.export_metadata()
         self.metadata_temp_path = self.settings.output_base_dir / "_gui_metadata.json"
         self.cost_totals = {"openai_cost_usd": 0.0, "tts_characters": 0}
@@ -778,11 +784,15 @@ class PodcastGeneratorWindow(QMainWindow):
         self.custom_project_name = panel.findChild(QLineEdit, "custom_project_name")
         if self.custom_project_name:
             self.custom_project_name.textChanged.connect(self._on_custom_project_name_changed)
+            self._custom_project_name_autofill_enabled = True
         self.run_dir_preview = panel.findChild(QLabel, "run_dir_preview")
         # -----------------------------------
         self._reset_pipeline_status()
         if self.tts_provider_combo:
             self._handle_tts_provider_change()
+        if self.azure_voice_combo:
+            self.azure_voice_combo.currentIndexChanged.connect(self._handle_azure_voice_change)
+            self._refresh_azure_voice_options()
         if self.output_mode_combo:
             saved_mode = getattr(self.settings, "output_mode", "video_audio") or "video_audio"
             idx = self.output_mode_combo.findData(saved_mode)
@@ -891,6 +901,25 @@ class PodcastGeneratorWindow(QMainWindow):
 
         self.voice_lab_status_label = self._helper_label("הקש על 🎙️ להקלטה או העלה קובץ.")
         layout.addWidget(self.voice_lab_status_label)
+
+        # Simple animated visualizer
+        visualizer = QFrame()
+        visualizer_layout = QHBoxLayout(visualizer)
+        visualizer_layout.setContentsMargins(0, 0, 0, 0)
+        visualizer_layout.setSpacing(4)
+        self.voice_lab_visual_bars: List[QFrame] = []
+        for _ in range(8):
+            bar = QFrame()
+            bar.setStyleSheet("background-color: #22c55e; border-radius: 3px;")
+            bar.setFixedWidth(8)
+            bar.setFixedHeight(8)
+            visualizer_layout.addWidget(bar, 0, Qt.AlignmentFlag.AlignBottom)
+            self.voice_lab_visual_bars.append(bar)
+        visualizer_layout.addStretch(1)
+        layout.addWidget(visualizer)
+        self.voice_lab_visual_timer = QTimer(self)
+        self.voice_lab_visual_timer.setInterval(120)
+        self.voice_lab_visual_timer.timeout.connect(self._tick_voice_visualizer)
 
         upload_btn = QPushButton("העלה קובץ (WAV/MP3)")
         upload_btn.clicked.connect(self._select_voice_sample)
@@ -1648,8 +1677,21 @@ class PodcastGeneratorWindow(QMainWindow):
         run_dir = base_dir / f"{date_str}_{slug}"
         return run_dir
 
+    def _set_custom_project_name_text(self, text: str) -> None:
+        """Set project name text without triggering user-facing autofill suppression."""
+        if not hasattr(self, "custom_project_name") or not self.custom_project_name:
+            return
+        self.custom_project_name.blockSignals(True)
+        self.custom_project_name.setText(text)
+        self.custom_project_name.blockSignals(False)
+        # Re-enable autofill for programmatic updates
+        self._custom_project_name_autofill_enabled = True
+
     def _on_custom_project_name_changed(self, text: str) -> None:
         """Keep metadata and output preview in sync with the project name field."""
+        # Disable future auto-fills once the user starts typing
+        if getattr(self.custom_project_name, "hasFocus", lambda: False)():
+            self._custom_project_name_autofill_enabled = False
         topic = text.strip() or self.current_metadata.get("topic", "")
         if topic:
             self.current_metadata["topic"] = topic
@@ -1699,6 +1741,7 @@ class PodcastGeneratorWindow(QMainWindow):
             if self.voice_lab_timer.isActive():
                 self.voice_lab_timer.stop()
             self.voice_lab_record_start = None
+            self._stop_voice_visualizer()
             self.voice_lab_timer_label.setText("00:00")
             self.voice_lab_timer_label.setVisible(False)
             if self.voice_lab_record_controls:
@@ -1722,6 +1765,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.voice_lab_record_controls.setVisible(True)
             if self.voice_lab_review_controls:
                 self.voice_lab_review_controls.setVisible(False)
+            self._start_voice_visualizer()
             self.voice_lab_trash_btn.setVisible(True)
             if self.voice_lab_mic_btn:
                 self.voice_lab_mic_btn.setVisible(True)
@@ -1738,6 +1782,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.voice_lab_record_controls.setVisible(False)
             if self.voice_lab_review_controls:
                 self.voice_lab_review_controls.setVisible(True)
+            self._stop_voice_visualizer()
             self.voice_lab_trash_btn.setVisible(True)
             if self.voice_lab_mic_btn:
                 self.voice_lab_mic_btn.setChecked(False)
@@ -1753,6 +1798,29 @@ class PodcastGeneratorWindow(QMainWindow):
         elapsed = int(time.time() - self.voice_lab_record_start)
         mins, secs = divmod(elapsed, 60)
         self.voice_lab_timer_label.setText(f"{mins:02d}:{secs:02d}")
+
+    def _start_voice_visualizer(self) -> None:
+        if not hasattr(self, "voice_lab_visual_timer") or not self.voice_lab_visual_timer:
+            return
+        self._tick_voice_visualizer()
+        self.voice_lab_visual_timer.start()
+
+    def _stop_voice_visualizer(self) -> None:
+        timer = getattr(self, "voice_lab_visual_timer", None)
+        if timer and timer.isActive():
+            timer.stop()
+        if hasattr(self, "voice_lab_visual_bars"):
+            for bar in self.voice_lab_visual_bars:
+                bar.setFixedHeight(8)
+
+    def _tick_voice_visualizer(self) -> None:
+        bars = getattr(self, "voice_lab_visual_bars", [])
+        if not bars:
+            return
+        active = getattr(self, "voice_lab_state", "") == "recording"
+        for bar in bars:
+            height = random.randint(10, 40) if active else 8
+            bar.setFixedHeight(height)
 
     def _handle_voice_profile_change(self) -> None:
         """Handle voice profile selection change and sync TTS provider."""
@@ -1793,6 +1861,8 @@ class PodcastGeneratorWindow(QMainWindow):
         azure_combo = getattr(self, "azure_voice_combo", None)
         if azure_combo:
             azure_combo.setVisible(not is_eleven)
+            if not is_eleven and azure_combo.count() == 0:
+                self._refresh_azure_voice_options()
         
         # Suggest matching voice profile if available
         if hasattr(self, "voice_combo"):
@@ -1811,6 +1881,76 @@ class PodcastGeneratorWindow(QMainWindow):
                             self.voice_combo.setCurrentIndex(idx)
                             self.voice_combo.blockSignals(False)
                             break
+
+    def _handle_azure_voice_change(self) -> None:
+        """Persist Azure voice selection and inform the user."""
+        combo = getattr(self, "azure_voice_combo", None)
+        if not combo:
+            return
+        voice_name = combo.currentData()
+        if not voice_name:
+            return
+        try:
+            self.settings.save_ui_preferences({"azure_default_voice": voice_name})
+        except Exception:
+            # best effort; do not block UI
+            pass
+        self._append_log(f"בחירת קול Azure עודכנה ל-{voice_name}")
+
+    def _refresh_azure_voice_options(self) -> None:
+        """Fetch available Azure Neural voices and populate the combo box."""
+        combo = getattr(self, "azure_voice_combo", None)
+        if not combo:
+            return
+
+        voices: List[Tuple[str, str]] = []
+        if self.settings.speech_key and self.settings.speech_region:
+            try:
+                import azure.cognitiveservices.speech as speechsdk  # type: ignore
+
+                speech_config = speechsdk.SpeechConfig(
+                    subscription=self.settings.speech_key,
+                    region=self.settings.speech_region,
+                )
+                synthesizer = speechsdk.SpeechSynthesizer(
+                    speech_config=speech_config, audio_config=None
+                )
+                result = synthesizer.get_voices_async().get()
+                fetched = getattr(result, "voices", []) or []
+                for voice in fetched:
+                    short_name = getattr(voice, "short_name", "")
+                    locale = getattr(voice, "locale", "")
+                    if not short_name or "Neural" not in short_name:
+                        continue
+                    label = f"{short_name} ({locale})"
+                    voices.append((label, short_name))
+            except Exception as exc:
+                self.logger.warning("[Azure Voices] Failed to fetch voices: %s", exc)
+
+        if not voices:
+            voices = [
+                ("he-IL-AvriNeural (Roee)", "he-IL-AvriNeural"),
+                ("he-IL-HilaNeural (Noa)", "he-IL-HilaNeural"),
+            ]
+
+        combo.blockSignals(True)
+        combo.clear()
+        for label, data in voices:
+            combo.addItem(label, data)
+        combo.blockSignals(False)
+
+        # Restore last selection if available
+        preferred = getattr(self.settings, "azure_default_voice", "") or voices[0][1]
+        idx = combo.findData(preferred)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.setCurrentIndex(0)
+        # Persist the default if we had to fall back
+        try:
+            self.settings.save_ui_preferences({"azure_default_voice": combo.currentData()})
+        except Exception:
+            pass
 
     def _open_elevenlabs_voice_selector(self) -> None:
         """Open the ElevenLabs voice selector dialog."""
@@ -1846,6 +1986,9 @@ class PodcastGeneratorWindow(QMainWindow):
             self.seed_worker and self.seed_worker.isRunning()
         ):
             self.logger.debug("[_send_chat_message] Skipped - worker already running")
+            return
+
+        if not self._ensure_network_ready("שליחת צ'אט"):
             return
             
         text = self.chat_input.toPlainText().strip()
@@ -1901,6 +2044,9 @@ class PodcastGeneratorWindow(QMainWindow):
                 QMessageBox.information(
                     self, "המתן", "ה-AI עסוק כרגע. נסה שוב בעוד רגע."
                 )
+                return
+
+            if not self._ensure_network_ready("העשרת תמונות"):
                 return
             
             # Ensure chat session is ready
@@ -2435,11 +2581,55 @@ class PodcastGeneratorWindow(QMainWindow):
             self.logger.warning("[System Status] Unexpected network probe error: %s", e)
             return False, 0.0
 
+    def _ensure_network_ready(self, action: str = "פעולה") -> bool:
+        """
+        Lightweight connectivity guard for network-dependent flows.
+        Shows the bottom banner in red and optional status message when offline.
+        """
+        online, latency_ms = self._probe_internet_latency()
+        if online:
+            return True
+
+        self.logger.warning("[Network] Blocked '%s' – offline", action)
+        self._show_network_error_banner()
+        if self.statusBar():
+            self.statusBar().showMessage("אין חיבור אינטרנט – נסו שוב כשתחזרו לרשת", 6000)
+        QMessageBox.warning(self, "אין אינטרנט", f"הפעולה '{action}' דורשת חיבור אינטרנט.\nבדקו את הרשת ונסו שוב.")
+        return False
+
+    def _show_network_error_banner(self) -> None:
+        """Render an explicit offline state in the bottom banner."""
+        if self._network_label:
+            self._network_label.setText("🌐 No Internet Connection")
+            self._network_label.setStyleSheet(self._status_label_style(1.0))
+        self._update_system_badge(net_text="NET offline")
+
+    def _reset_status_indicators(self) -> None:
+        """Return status labels/badge to a neutral state."""
+        if self._network_label:
+            self._network_label.setText("🌐 בודק...")
+            self._network_label.setStyleSheet("font-weight:600; color:#94a3b8; padding:0 8px;")
+        # Reset badge text
+        self._update_system_badge(net_text="NET --")
+        if self.statusBar():
+            self.statusBar().clearMessage()
+
+    def _sync_transcript_to_session(self, path: Optional[Path]) -> None:
+        """Send the active transcript path/snippet into the chat session context."""
+        if not hasattr(self, "chat_session") or not self.chat_session:
+            return
+        if path and path.exists():
+            snippet = self._read_transcript_snippet(path, limit=4000)
+            self.chat_session.attach_transcript(path, snippet)
+        else:
+            self.chat_session.attach_transcript(None, "")
+
     def _handle_transcript_changed(self) -> None:
         self._update_onboarding_tip()
         path_text = self.transcript_edit.text().strip()
         if not path_text:
             self._active_transcript = None
+            self._sync_transcript_to_session(None)
             return
         path = Path(path_text)
         if not path.exists():
@@ -2478,6 +2668,9 @@ class PodcastGeneratorWindow(QMainWindow):
             # Case 3: Fresh start or User confirmed reset
             self._active_transcript = canonical
             self._reset_metadata_session()
+
+        # Keep chat session aware of the transcript content
+        self._sync_transcript_to_session(path)
 
         if not self._should_auto_seed():
             return
@@ -2525,10 +2718,21 @@ class PodcastGeneratorWindow(QMainWindow):
         self.seed_worker = None
 
     def _reset_metadata_session(self) -> None:
-        self.chat_session.reset()
-        self.current_metadata = self.chat_session.export_metadata()
+        """Deep reset of chat + metadata + UI state."""
+        if hasattr(self, "chat_session") and self.chat_session:
+            # Clear all chat context (messages, attachments, transcript snippet)
+            self.chat_session.reset()
+        self._sync_transcript_to_session(None)
+        self._custom_project_name_autofill_enabled = True
+        self._active_transcript = None
+        self.current_transcript_path = None
+        self.current_project_path = None
+        self.uploaded_documents = []
+        self.current_metadata = _default_metadata()
         if hasattr(self, "chat_history"):
             self.chat_history.clear()
+        # Reset banner/network to neutral state
+        self._reset_status_indicators()
         self._update_metadata_preview()
 
     def _should_auto_seed(self) -> bool:
@@ -2601,8 +2805,12 @@ class PodcastGeneratorWindow(QMainWindow):
         if hasattr(self, "custom_project_name"):
             current_text = self.custom_project_name.text().strip()
             topic = self.current_metadata.get("topic", "").strip()
-            if not current_text and topic:
-                self.custom_project_name.setText(topic)
+            if (
+                self._custom_project_name_autofill_enabled
+                and not current_text
+                and topic
+            ):
+                self._set_custom_project_name_text(topic)
                 self.logger.debug("[_update_metadata_preview] Auto-filled custom_project_name: %s", topic)
 
         self._apply_text_direction(self.metadata_preview, pretty)
@@ -2843,8 +3051,27 @@ class PodcastGeneratorWindow(QMainWindow):
             "Documents (*.pdf *.docx *.pptx *.txt *.md);;All Files (*)",
         )
         for file in files:
-            if file and not any(self.materials_list.item(i).text() == file for i in range(self.materials_list.count())):
-                self.materials_list.addItem(file)
+            if not file:
+                continue
+
+            path = Path(file)
+            try:
+                if os.path.getsize(path) <= 0:
+                    QMessageBox.warning(
+                        self,
+                        "קובץ ריק",
+                        f"הקובץ {path.name} ריק (0 bytes) ולא יתווסף לרשימת החומרים.",
+                    )
+                    continue
+            except OSError as exc:
+                QMessageBox.warning(self, "שגיאה", f"לא ניתן לאמת את גודל הקובץ:\n{exc}")
+                continue
+
+            if any(self.materials_list.item(i).text() == file for i in range(self.materials_list.count())):
+                continue
+
+            self.materials_list.addItem(str(path))
+            self._append_log(f"קובץ צורף: {path.name}")
         self._sync_materials_to_session()
 
     def _remove_materials(self) -> None:
@@ -2968,6 +3195,12 @@ class PodcastGeneratorWindow(QMainWindow):
         except OSError as e:
             validation_errors.append(f"לא ניתן ליצור תיקיית פלט: {e}")
             self.logger.error("[_collect_command] Cannot create output directory: %s", e)
+
+        # Require an explicit project name
+        if hasattr(self, "custom_project_name"):
+            project_name = self.custom_project_name.text().strip()
+            if not project_name:
+                validation_errors.append("בחרו שם פרויקט (לא ניתן להשאיר ריק)")
             
         # Report validation errors
         if validation_errors:
@@ -3120,6 +3353,10 @@ class PodcastGeneratorWindow(QMainWindow):
         Results are saved to the output directory and logged to history.
         """
         self.logger.info("[_run_pipeline] Starting pipeline execution")
+
+        if not self._ensure_network_ready("Pipeline run"):
+            return
+
         self._set_pipeline_buttons_state(False)
         
         if self.worker and self.worker.isRunning():
@@ -3281,6 +3518,9 @@ class PodcastGeneratorWindow(QMainWindow):
         The result is saved to visual_metadata.json for use by the pipeline.
         """
         self.logger.info("[_generate_visual_metadata] Starting visual metadata generation")
+
+        if not self._ensure_network_ready("מטא-דאטה ויזואלית"):
+            return
         
         # Check if we have transcript text
         transcript_text = getattr(self, "transcript_edit", None)
@@ -4990,7 +5230,7 @@ class PodcastGeneratorWindow(QMainWindow):
                     project_name = metadata.get("topic")
                 
                 if project_name:
-                    self.custom_project_name.setText(project_name)
+                    self._set_custom_project_name_text(project_name)
                     self.logger.debug("[_load_project_from_directory] Auto-filled custom_project_name: %s", project_name)
             
             # Load transcript using helper function
@@ -5058,6 +5298,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.transcript_edit.blockSignals(True)
                 self.transcript_edit.setText(str(transcript_path))
                 self.transcript_edit.blockSignals(False)
+                self._sync_transcript_to_session(transcript_path)
                 if not silent:
                     self._log(f"תמלול נטען מהיסטוריה: {transcript_path.name}")
                 return True, "history_entry"
@@ -5081,6 +5322,7 @@ class PodcastGeneratorWindow(QMainWindow):
                                     self.transcript_edit.setText(str(p))
                                     self.transcript_edit.blockSignals(False)
                                     self.logger.info("[_find_and_load_transcript] Found in processing log: %s", p)
+                                    self._sync_transcript_to_session(p)
                                     return True, "processing_log"
             except OSError as e:
                 self.logger.warning("[_find_and_load_transcript] Error reading processing log: %s", e)
@@ -5093,6 +5335,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.transcript_edit.setText(str(cand))
                 self.transcript_edit.blockSignals(False)
                 self.logger.info("[_find_and_load_transcript] Found by name pattern: %s", cand)
+                self._sync_transcript_to_session(cand)
                 return True, f"pattern_match:{cand.name}"
             
         # 4. Fallback: largest txt file (excluding logs)
@@ -5106,6 +5349,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.transcript_edit.blockSignals(False)
                 self.logger.info("[_find_and_load_transcript] Using largest txt file: %s (%d bytes)", 
                                largest, largest.stat().st_size)
+                self._sync_transcript_to_session(largest)
                 return True, f"largest_file:{largest.name}"
         
         self.logger.warning("[_find_and_load_transcript] No transcript found after all searches")
@@ -5206,6 +5450,7 @@ class PodcastGeneratorWindow(QMainWindow):
             
             # Reset metadata to empty state
             self._reset_metadata_session()
+            self.current_metadata = _default_metadata()
             
             # Clear materials
             if hasattr(self, "materials_list"):
@@ -5231,10 +5476,6 @@ class PodcastGeneratorWindow(QMainWindow):
             # Clear story preview
             if hasattr(self, "story_preview"):
                 self.story_preview.clear()
-            
-            # Reset chat session
-            if hasattr(self, "chat_session") and self.chat_session:
-                self.chat_session.clear_chat(preserve_metadata=False)
             
             # Clear metadata preview
             if hasattr(self, "metadata_preview"):

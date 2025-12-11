@@ -141,6 +141,8 @@ class MetadataChatSession:
         self.current_visual_metadata: Dict = _default_visual_metadata()
         self.materials: List[Path] = []
         self.urls: List[str] = []
+        self.transcript_path: Optional[Path] = None
+        self.transcript_snippet: str = ""
         self._gemini_model = None
         self._azure_client: Optional[AzureOpenAI] = None
         self._total_ai_time: float = 0.0
@@ -173,10 +175,25 @@ class MetadataChatSession:
     def attach_urls(self, urls: List[str]) -> None:
         self.urls = urls
 
+    def attach_transcript(self, path: Optional[Path], snippet: str = "") -> None:
+        """Attach active transcript context to the chat session."""
+        self.transcript_path = path
+        self.transcript_snippet = snippet.strip()
+
     def reset(self) -> None:
-        self.messages.clear()
+        """Deep reset of chat state and all attached context."""
+        self.messages = []
+        self.materials = []
+        self.urls = []
         self.current_metadata = _default_metadata()
         self.current_visual_metadata = _default_visual_metadata()
+        self.transcript_path = None
+        self.transcript_snippet = ""
+        self.logger.info("Chat session fully reset (materials and history cleared)")
+
+    def clear_context(self) -> None:
+        """Alias for reset to make intent explicit at call sites."""
+        self.reset()
 
     def clear_chat(self, preserve_metadata: bool = True) -> None:
         """Clear conversation history while optionally keeping current metadata."""
@@ -480,11 +497,23 @@ class MetadataChatSession:
         materials_section = "\n".join(f"- {path.name}" for path in self.materials) or "לא הועלו קבצים"
         urls_section = "\n".join(f"- {url}" for url in self.urls) or "אין קישורים"
         metadata_snapshot = json.dumps(self.current_metadata, ensure_ascii=False, indent=2)
+        transcript_section = "אין תמלול מצורף"
+        if self.transcript_path or self.transcript_snippet:
+            parts = []
+            if self.transcript_path:
+                parts.append(f"שם הקובץ: {self.transcript_path.name}")
+            if self.transcript_snippet:
+                preview = self.transcript_snippet[:1200]
+                if len(self.transcript_snippet) > 1200:
+                    preview += " …"
+                parts.append(f"קטע מהתמלול:\n{preview}")
+            transcript_section = "\n".join(parts)
         return (
             f"{self.settings.metadata_system_prompt}\n\n"
             "הקשר נוסף:\n"
             f"* קבצים מצורפים:\n{materials_section}\n"
             f"* קישורים:\n{urls_section}\n"
+            f"* תמלול פעיל:\n{transcript_section}\n"
             f"* מטא-דאטה קיים:\n{metadata_snapshot}\n\n"
             "הנחיות:\n"
             "- ענה כמו עוזר NotebookLM ידידותי, והצע תובנות/שאלות המשך.\n"

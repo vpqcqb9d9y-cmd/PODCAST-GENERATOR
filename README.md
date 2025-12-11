@@ -132,6 +132,14 @@ M.B.S Studio ingests a raw transcript (±30K words), enriches it with AI-driven 
 - **GUI Visual Metadata Reliability**: הוספנו ספינר חי והמרת חירום מקומית, כך שגם אם Gemini/Azure לא זמינים – הכפתור “🎨 צור מטא-דאטה ויזואלית” יחזור תוך 1‑2 דקות עם 10 פריימים + בלוק וידאו.
 - **Always-On System Indicators**: מדדי CPU/NET/🔋 חוזרים לשורת הסטטוס התחתונה לטובת מסכים קטנים, בלי לוותר על תג הסטטוס הקומפקטי בכותרת.
 
+### Recent Updates (v3.3.0)
+- Live Chat banner padding adjusted for better vertical spacing.
+- Network-dependent actions now block when offline and flash the bottom status banner in red.
+- Voice Lab adds a live mic visualizer while recording.
+- Chat sessions include the active transcript snippet/path for better context in metadata building.
+- Azure TTS dropdown now fetches available Neural voices (key/region required) and respects your selection.
+- Transcription picker is restricted to text files (MP4 uploads disabled to avoid crashes).
+
 ### Recent Updates (v3.2.0)
 - ProductionGuardian safeguards: validates assets, removes black frames, adaptive timelines without placeholders, Ken Burns pan/zoom, and audio normalization before video render.
 - Voice Lab recording runs on a background thread with Stop / Play Preview / Delete controls to keep the UI responsive.

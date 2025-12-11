@@ -194,6 +194,8 @@ def _build_chat_card(
     chat_card.setObjectName("ChatCard")
     chat_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     chat_layout = QVBoxLayout(chat_card)
+    chat_layout.setContentsMargins(12, 18, 12, 12)
+    chat_layout.setSpacing(10)
     
     chat_layout.addWidget(section_label("שיחה חיה"))
     
