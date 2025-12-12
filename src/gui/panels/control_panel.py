@@ -53,6 +53,7 @@ def build_control_panel(
 
     parent.transcript_edit = QLineEdit()
     parent.transcript_edit.setPlaceholderText("בחר קובץ .txt או .srt")
+    parent.transcript_edit.textChanged.connect(parent._handle_transcript_changed)
     transcript_btn = QPushButton("בחר תמלול")
     transcript_btn.setToolTip("פתח בחירת קובץ תמלול (TXT/SRT).")
     transcript_btn.clicked.connect(

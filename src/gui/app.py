@@ -110,7 +110,15 @@ from .constants import (
     PPT_EXTRA_COST,
     LOG_BUFFER_MAX_SIZE,
 )
-from .workers import PipelineWorker, ChatWorker, MetadataSeedWorker, VisualMetadataWorker
+from .controllers.system_monitor import SystemMonitorController
+from .controllers.voice_lab import VoiceLabController
+from .workers import (
+    PipelineWorker,
+    ChatWorker,
+    MetadataSeedWorker,
+    VisualMetadataWorker,
+    RecordingWorker,
+)
 from .widgets import SmoothScrollArea, ChatBubbleDelegate, _text_is_rtl
 from .dialogs import (
     AboutDialog,
@@ -123,58 +131,6 @@ from .dialogs import (
     VisualSettingsDialog,
 )
 from .panels import build_projects_panel, build_workspace_panel, build_summary_panel, build_control_panel
-
-
-class RecordingWorker(QObject):
-    """
-    Offloads 60s microphone recording to a worker thread so the UI stays responsive.
-    Emits status updates and completion/error signals for the Voice Lab flow.
-    """
-
-    status = pyqtSignal(str)
-    finished = pyqtSignal(Path, int)
-    error = pyqtSignal(str)
-
-    def __init__(self, duration: int = 60, samplerate: int = 44100, parent: Optional[QObject] = None) -> None:
-        super().__init__(parent)
-        self.duration = duration
-        self.samplerate = samplerate
-        self._stop_requested = False
-
-    def request_stop(self) -> None:
-        self._stop_requested = True
-        try:
-            import sounddevice as sd  # type: ignore
-            sd.stop()
-        except Exception:
-            pass
-
-    def run(self) -> None:
-        try:
-            import sounddevice as sd  # type: ignore
-            import numpy as np  # type: ignore
-            from scipy.io import wavfile  # type: ignore
-        except Exception as exc:
-            self.error.emit(f"Missing recording dependencies: {exc}")
-            return
-
-        try:
-            self.status.emit("מקליט... לחצו שוב להפסקה.")
-            frames = int(self.duration * self.samplerate)
-            data = sd.rec(frames, samplerate=self.samplerate, channels=1, dtype="float32")
-            sd.wait()
-
-            if self._stop_requested:
-                self.status.emit("הקלטה הופסקה.")
-                self.finished.emit(Path(), 0)
-                return
-
-            temp_path = Path("temp_recording.wav")
-            wavfile.write(temp_path, self.samplerate, (data * 32767).astype(np.int16))
-            self.status.emit("Recording saved: temp_recording.wav")
-            self.finished.emit(temp_path, len(data))
-        except Exception as exc:
-            self.error.emit(str(exc))
 
 
 class PodcastGeneratorWindow(QMainWindow):
@@ -316,14 +272,33 @@ class PodcastGeneratorWindow(QMainWindow):
         self._visual_meta_spinner_step: int = 0
         self._visual_meta_spinner_base: str = ""
         self._chat_resized_once: bool = False
-        self._psutil_mod = None
-        self._psutil_retry_scheduled = False
-        self._psutil_last_error: Optional[str] = None
-        self._psutil_attempts: int = 0
+        self.chat_status_label: Optional[QLabel] = None
+        self._metadata_processing_active: bool = False
+        self._metadata_chip_original_text: Optional[str] = None
         self.voice_lab_file_path: Optional[Path] = None
         self.voice_lab_status_label: Optional[QLabel] = None
         self.voice_lab_quota_label: Optional[QLabel] = None
         self.voice_lab_file_label: Optional[QLabel] = None
+
+        # Controllers must exist before panels/widgets that depend on them
+        self.system_monitor = SystemMonitorController(
+            parent=self,
+            logger=self.logger,
+            status_bar=self.statusBar(),
+            system_status_banner=None,
+            cpu_label=None,
+            memory_label=None,
+            battery_label=None,
+            network_label=None,
+            system_badge_label=None,
+        )
+        self.voice_lab_controller = VoiceLabController(
+            window=self,
+            logger=self.logger,
+            settings=self.settings,
+            voice_lab_service=self.voice_lab_service,
+            voice_manager=self.voice_manager,
+        )
 
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -585,7 +560,15 @@ class PodcastGeneratorWindow(QMainWindow):
         self._update_metadata_preview()
         self._update_content_layout_mode()
         QTimer.singleShot(200, self._update_gemini_status_banner)
-        
+
+        # Wire controllers to the UI now that widgets exist
+        self.system_monitor.system_status_banner = self.system_status_banner
+        self.system_monitor.cpu_label = self._cpu_label
+        self.system_monitor.memory_label = self._memory_label
+        self.system_monitor.battery_label = self._battery_label
+        self.system_monitor.network_label = self._network_label
+        self.system_monitor.system_badge_label = self.system_badge_label
+
         # Initialize system status bar after window is shown
         # Use QTimer to ensure window is fully initialized
         QTimer.singleShot(100, self._init_system_status_bar)
@@ -957,178 +940,38 @@ class PodcastGeneratorWindow(QMainWindow):
         return panel
 
     def _on_record_clicked(self) -> None:
-        btn = self.sender()
-        if not isinstance(btn, QPushButton):
-            return
-        try:
-            import sounddevice as sd  # type: ignore
-            import numpy as np  # type: ignore
-            from scipy.io import wavfile  # type: ignore
-        except Exception:
-            reply = QMessageBox.question(
-                self,
-                "נדרשת התקנה",
-                "ספריות הקלטה חסרות. האם להתקין אותן כעת? (sounddevice, numpy, scipy)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", "sounddevice", "numpy", "scipy"]
-                    )
-                    QMessageBox.information(
-                        self, "התקנה הושלמה", "ספריות ההקלטה הותקנו בהצלחה."
-                    )
-                except Exception as exc_install:
-                    QMessageBox.warning(
-                        self,
-                        "שגיאת התקנה",
-                        f"נכשל בהתקנת ספריות ההקלטה:\n{exc_install}",
-                    )
-            btn.setChecked(False)
-            return
-
-        if btn.isChecked():
-            if self._record_thread and self._record_thread.isRunning():
-                btn.setChecked(True)
-                self.voice_lab_status_label.setText("הקלטה כבר פעילה...")
-                return
-            self._set_voice_lab_state("recording")
-            if hasattr(self, "voice_lab_clone_btn") and self.voice_lab_clone_btn:
-                self.voice_lab_clone_btn.setEnabled(False)
-            self._record_thread = QThread(self)
-            self._record_worker = RecordingWorker(duration=60, samplerate=44100)
-            self._record_worker.moveToThread(self._record_thread)
-
-            self._record_thread.started.connect(self._record_worker.run)
-            self._record_worker.status.connect(self.voice_lab_status_label.setText)
-            self._record_worker.finished.connect(lambda path, frames: self._on_recording_finished(path, frames, btn))
-            self._record_worker.error.connect(lambda msg: self._on_recording_error(msg, btn))
-            self._record_worker.finished.connect(self._record_thread.quit)
-            self._record_worker.error.connect(self._record_thread.quit)
-            self._record_thread.finished.connect(self._record_worker.deleteLater)
-            self._record_thread.finished.connect(self._record_thread.deleteLater)
-            self._record_thread.finished.connect(self._clear_recording_refs)
-
-            self._record_thread.start()
-        else:
-            if self._record_thread and self._record_thread.isRunning() and self._record_worker:
-                self.voice_lab_status_label.setText("עוצר הקלטה...")
-                self._record_worker.request_stop()
-            btn.setChecked(False)
-            self._set_voice_lab_state("idle")
+        self.voice_lab_controller.on_record_clicked(self.sender())
 
     def _on_recording_finished(self, path: Path, frames: int, btn: QPushButton) -> None:
-        btn.setChecked(False)
-        if path and path.exists() and frames > 0:
-            self.voice_lab_file_path = path
-            self.voice_lab_file_label.setText(f"נשמר: {path.name}")
-            self.voice_lab_status_label.setText("Recording saved: temp_recording.wav")
-            if hasattr(self, "voice_lab_clone_btn") and self.voice_lab_clone_btn:
-                self.voice_lab_clone_btn.setEnabled(True)
-            self._set_voice_lab_state("review")
-        else:
-            self.voice_lab_status_label.setText("הקלטה הופסקה.")
-            if hasattr(self, "voice_lab_clone_btn") and self.voice_lab_clone_btn:
-                self.voice_lab_clone_btn.setEnabled(False)
-            self._set_voice_lab_state("idle")
-        self._clear_recording_refs()
+        self.voice_lab_controller._on_recording_finished(path, frames, btn)
 
     def _on_recording_error(self, message: str, btn: QPushButton) -> None:
-        btn.setChecked(False)
-        self.voice_lab_status_label.setText(f"שגיאת הקלטה: {message}")
-        if hasattr(self, "voice_lab_clone_btn") and self.voice_lab_clone_btn:
-            self.voice_lab_clone_btn.setEnabled(False)
-        self._clear_recording_refs()
-        self._set_voice_lab_state("idle")
+        self.voice_lab_controller._on_recording_error(message, btn)
 
     def _clear_recording_refs(self) -> None:
-        if self._record_thread and self._record_thread.isRunning():
-            self._record_thread.quit()
-            self._record_thread.wait(1500)
-        self._record_thread = None
-        self._record_worker = None
+        self.voice_lab_controller._clear_recording_refs()
 
     def _stop_voice_recording(self) -> None:
         """Stop recording safely from the UI (Stop button)."""
-        if self._record_worker:
-            self.voice_lab_status_label.setText("עוצר הקלטה...")
-            self._record_worker.request_stop()
-        btn = getattr(self, "voice_lab_mic_btn", None)
-        if btn and btn.isChecked():
-            btn.setChecked(False)
+        self.voice_lab_controller.stop_voice_recording()
 
     def _reset_voice_lab_file(self) -> None:
         """Clear current voice sample and disable clone until a new file is selected."""
-        if self.voice_lab_file_path and self.voice_lab_file_path.exists():
-            try:
-                self.voice_lab_file_path.unlink()
-            except Exception:
-                pass
-        self.voice_lab_file_path = None
-        if self.voice_lab_file_label:
-            self.voice_lab_file_label.setText("לא נבחר קובץ")
-        if self.voice_lab_status_label:
-            self.voice_lab_status_label.setText("בחר/י קובץ או הקלט מחדש.")
-        if hasattr(self, "voice_lab_clone_btn") and self.voice_lab_clone_btn:
-            self.voice_lab_clone_btn.setEnabled(False)
-        self._set_voice_lab_state("idle")
-        self._stop_voice_playback()
+        self.voice_lab_controller.reset_voice_lab_file()
 
     def _play_voice_preview(self) -> None:
         """Open the recorded/selected file in the default media player."""
-        if not self.voice_lab_file_path or not self.voice_lab_file_path.exists():
-            QMessageBox.information(self, "קובץ חסר", "אין קובץ להשמעה כרגע.")
-            return
-        try:
-            if sys.platform.startswith("win"):
-                os.startfile(str(self.voice_lab_file_path))  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(self.voice_lab_file_path)])
-            else:
-                subprocess.Popen(["xdg-open", str(self.voice_lab_file_path)])
-        except Exception as exc:
-            QMessageBox.warning(self, "השמעה נכשלה", f"לא ניתן להשמיע את הקובץ:\n{exc}")
+        self.voice_lab_controller.play_voice_preview()
 
     def _toggle_voice_preview(self) -> None:
         """Play/pause the recorded file inline using QMediaPlayer."""
-        if not self.voice_lab_file_path or not self.voice_lab_file_path.exists():
-            QMessageBox.information(self, "קובץ חסר", "אין קובץ להשמעה כרגע.")
-            return
-        try:
-            if self.voice_playback_player is None:
-                self.voice_playback_player = QMediaPlayer()
-                self.voice_audio_output = QAudioOutput()
-                self.voice_playback_player.setAudioOutput(self.voice_audio_output)
-                self.voice_playback_player.mediaStatusChanged.connect(
-                    lambda _: self._update_voice_play_button_icon()
-                )
-            self.voice_playback_player.setSource(QUrl.fromLocalFile(str(self.voice_lab_file_path)))
-            if self.voice_playback_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-                self.voice_playback_player.pause()
-            else:
-                self.voice_playback_player.play()
-            self._update_voice_play_button_icon()
-        except Exception as exc:
-            QMessageBox.warning(self, "השמעה נכשלה", f"לא ניתן להשמיע את הקובץ:\n{exc}")
+        self.voice_lab_controller.toggle_voice_preview()
 
     def _stop_voice_playback(self) -> None:
-        if self.voice_playback_player and self.voice_playback_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
-            try:
-                self.voice_playback_player.stop()
-            except Exception:
-                pass
-        self._update_voice_play_button_icon(reset=True)
+        self.voice_lab_controller.stop_voice_playback()
 
     def _update_voice_play_button_icon(self, reset: bool = False) -> None:
-        btn = getattr(self, "voice_lab_play_btn", None)
-        if not btn:
-            return
-        if reset or not self.voice_playback_player or self.voice_playback_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
-            btn.setText("Play Preview")
-        else:
-            btn.setText("Pause")
+        self.voice_lab_controller._update_voice_play_button_icon(reset=reset)
 
     # --- UI helpers --------------------------------------------------
     def _card_widget(self) -> QFrame:
@@ -1275,6 +1118,15 @@ class PodcastGeneratorWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # pragma: no cover - GUI runtime
         try:
+            # Ensure background recording is stopped before widgets are destroyed
+            try:
+                self.voice_lab_controller.stop_voice_recording()
+            except Exception:
+                pass
+            if getattr(self, "_record_thread", None) and self._record_thread.isRunning():
+                self._record_thread.quit()
+                self._record_thread.wait(1500)
+
             self._persist_window_layout()
             self._persist_chat_preferences()
         except Exception as exc:  # pragma: no cover - best effort only
@@ -1563,22 +1415,7 @@ class PodcastGeneratorWindow(QMainWindow):
         return row
 
     def _select_voice_sample(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "בחר קובץ קול (עד 60 שניות)",
-            str(self.settings.output_base_dir),
-            "Audio Files (*.wav *.mp3)",
-        )
-        if not file_path:
-            return
-        self.voice_lab_file_path = Path(file_path)
-        if self.voice_lab_file_label:
-            self.voice_lab_file_label.setText(f"נבחר: {self.voice_lab_file_path.name}")
-        if self.voice_lab_status_label:
-            self.voice_lab_status_label.setText("מוכן לשיכפול קולות.")
-        if hasattr(self, "voice_lab_clone_btn") and self.voice_lab_clone_btn:
-            self.voice_lab_clone_btn.setEnabled(True)
-        self._set_voice_lab_state("review")
+        self.voice_lab_controller.select_voice_sample()
 
     def _refresh_voice_profiles_combo(self, select_profile: Optional[str] = None) -> None:
         if not hasattr(self, "voice_combo"):
@@ -1599,64 +1436,10 @@ class PodcastGeneratorWindow(QMainWindow):
         self.voice_combo.blockSignals(False)
 
     def _refresh_voice_quota(self) -> None:
-        if not self.voice_lab_quota_label or not self.voice_lab_service:
-            return
-        try:
-            quota = self.voice_lab_service.get_subscription_quota()
-            remaining = quota["character_limit"] - quota["character_count"]
-            remaining = max(0, remaining)
-            self.voice_lab_quota_label.setText(
-                f"נותרו {remaining:,} / {quota['character_limit']:,} תווים החודש"
-            )
-        except Exception as exc:  # pragma: no cover - UI only
-            self.voice_lab_quota_label.setText(f"שגיאה בשליפת מכסה: {exc}")
+        self.voice_lab_controller.refresh_voice_quota()
 
     def _handle_clone_voice(self) -> None:
-        if not self.voice_lab_service:
-            QMessageBox.warning(
-                self,
-                "API Key חסר",
-                "נדרש ELEVENLABS_API_KEY כדי לשכפל קול.",
-            )
-            return
-        if not self.settings.elevenlabs_api_key:
-            QMessageBox.warning(
-                self,
-                "API Key חסר",
-                "נדרש ELEVENLABS_API_KEY כדי לשכפל קול.",
-            )
-            return
-        if not self.voice_lab_file_path or not self.voice_lab_file_path.exists():
-            QMessageBox.warning(
-                self,
-                "קובץ חסר",
-                "בחר/י קובץ WAV או MP3 (עד 60 שניות) לפני השיכפול.",
-            )
-            return
-
-        self.voice_lab_clone_btn.setEnabled(False)
-        try:
-            voice_id = self.voice_lab_service.clone_instant_voice(
-                self.voice_lab_file_path, voice_name="Custom Voice"
-            )
-            self.voice_lab_service.save_custom_voice_profile(voice_id)
-            self._refresh_voice_profiles_combo(select_profile="Custom")
-            if self.voice_lab_status_label:
-                self.voice_lab_status_label.setText(
-                    f"✅ קול שוכפל ונשמר כפרופיל 'Custom' (ID: {voice_id[:10]}...)"
-                )
-            QMessageBox.information(
-                self,
-                "Voice Cloned",
-                "הקול שוכפל בהצלחה ונשמר כפרופיל 'Custom' ב-voice_profiles.json.",
-            )
-        except Exception as exc:
-            if self.voice_lab_status_label:
-                self.voice_lab_status_label.setText(f"❌ שגיאה: {exc}")
-            QMessageBox.critical(self, "כישלון בשיכפול קול", str(exc))
-        finally:
-            self.voice_lab_clone_btn.setEnabled(True)
-            self._refresh_voice_quota()
+        self.voice_lab_controller.handle_clone_voice()
 
     def _predict_run_dir(self, metadata: Dict, base_dir: Path) -> Path:
         date_str = metadata.get("date") or datetime.now().strftime("%Y-%m-%d")
@@ -1735,92 +1518,19 @@ class PodcastGeneratorWindow(QMainWindow):
             pass
 
     def _set_voice_lab_state(self, state: str) -> None:
-        """State machine: idle -> recording -> review."""
-        self.voice_lab_state = state
-        if state == "idle":
-            if self.voice_lab_timer.isActive():
-                self.voice_lab_timer.stop()
-            self.voice_lab_record_start = None
-            self._stop_voice_visualizer()
-            self.voice_lab_timer_label.setText("00:00")
-            self.voice_lab_timer_label.setVisible(False)
-            if self.voice_lab_record_controls:
-                self.voice_lab_record_controls.setVisible(True)
-            if self.voice_lab_review_controls:
-                self.voice_lab_review_controls.setVisible(False)
-            self.voice_lab_trash_btn.setVisible(True)
-            if self.voice_lab_mic_btn:
-                self.voice_lab_mic_btn.setChecked(False)
-                self.voice_lab_mic_btn.setVisible(True)
-                self.voice_lab_mic_btn.setText("Record")
-                self.voice_lab_mic_btn.setStyleSheet("background-color: #25D366;")
-            if self.voice_lab_stop_btn:
-                self.voice_lab_stop_btn.setEnabled(False)
-            self._stop_voice_playback()
-        elif state == "recording":
-            self.voice_lab_record_start = time.time()
-            self.voice_lab_timer.start(1000)
-            self.voice_lab_timer_label.setVisible(True)
-            if self.voice_lab_record_controls:
-                self.voice_lab_record_controls.setVisible(True)
-            if self.voice_lab_review_controls:
-                self.voice_lab_review_controls.setVisible(False)
-            self._start_voice_visualizer()
-            self.voice_lab_trash_btn.setVisible(True)
-            if self.voice_lab_mic_btn:
-                self.voice_lab_mic_btn.setVisible(True)
-                self.voice_lab_mic_btn.setChecked(True)
-                self.voice_lab_mic_btn.setText("Recording...")
-                self.voice_lab_mic_btn.setStyleSheet("background-color: #ef4444;")
-            if self.voice_lab_stop_btn:
-                self.voice_lab_stop_btn.setEnabled(True)
-        elif state == "review":
-            if self.voice_lab_timer.isActive():
-                self.voice_lab_timer.stop()
-            self.voice_lab_timer_label.setVisible(False)
-            if self.voice_lab_record_controls:
-                self.voice_lab_record_controls.setVisible(False)
-            if self.voice_lab_review_controls:
-                self.voice_lab_review_controls.setVisible(True)
-            self._stop_voice_visualizer()
-            self.voice_lab_trash_btn.setVisible(True)
-            if self.voice_lab_mic_btn:
-                self.voice_lab_mic_btn.setChecked(False)
-                self.voice_lab_mic_btn.setVisible(False)
-            if self.voice_lab_stop_btn:
-                self.voice_lab_stop_btn.setEnabled(False)
-        self._update_voice_play_button_icon(reset=True)
+        self.voice_lab_controller._set_voice_lab_state(state)
 
     def _tick_voice_timer(self) -> None:
-        if not self.voice_lab_record_start:
-            self.voice_lab_timer_label.setText("00:00")
-            return
-        elapsed = int(time.time() - self.voice_lab_record_start)
-        mins, secs = divmod(elapsed, 60)
-        self.voice_lab_timer_label.setText(f"{mins:02d}:{secs:02d}")
+        self.voice_lab_controller.tick_voice_timer()
 
     def _start_voice_visualizer(self) -> None:
-        if not hasattr(self, "voice_lab_visual_timer") or not self.voice_lab_visual_timer:
-            return
-        self._tick_voice_visualizer()
-        self.voice_lab_visual_timer.start()
+        self.voice_lab_controller._start_voice_visualizer()
 
     def _stop_voice_visualizer(self) -> None:
-        timer = getattr(self, "voice_lab_visual_timer", None)
-        if timer and timer.isActive():
-            timer.stop()
-        if hasattr(self, "voice_lab_visual_bars"):
-            for bar in self.voice_lab_visual_bars:
-                bar.setFixedHeight(8)
+        self.voice_lab_controller._stop_voice_visualizer()
 
     def _tick_voice_visualizer(self) -> None:
-        bars = getattr(self, "voice_lab_visual_bars", [])
-        if not bars:
-            return
-        active = getattr(self, "voice_lab_state", "") == "recording"
-        for bar in bars:
-            height = random.randint(10, 40) if active else 8
-            bar.setFixedHeight(height)
+        self.voice_lab_controller._tick_voice_visualizer()
 
     def _handle_voice_profile_change(self) -> None:
         """Handle voice profile selection change and sync TTS provider."""
@@ -1972,6 +1682,9 @@ class PodcastGeneratorWindow(QMainWindow):
 
     # --- Actions -----------------------------------------------------
     def _send_template_prompt(self, template: str) -> None:
+        if template.strip().startswith("בנה מטא"):
+            # Provide immediate visual feedback when building metadata via the chip
+            self._set_metadata_processing_state(True)
         self.chat_input.setPlainText(template)
         self._send_chat_message()
 
@@ -2249,6 +1962,7 @@ class PodcastGeneratorWindow(QMainWindow):
         self.logger.debug("[_chat_finished] Chat worker completed")
         self._set_chat_busy(False)
         self.chat_worker = None
+        self._set_metadata_processing_state(False)
         
         # Save chat history after each interaction
         try:
@@ -2304,6 +2018,65 @@ class PodcastGeneratorWindow(QMainWindow):
             btn.setEnabled(enabled)
         self._update_gallery_buttons()
 
+    def _reset_chat_scroll_top(self) -> None:
+        """Reset chat list scroll to the top without forcing a jump to bottom."""
+        chat = getattr(self, "chat_history", None)
+        if not chat:
+            return
+        v_scroll = chat.verticalScrollBar()
+        if v_scroll:
+            v_scroll.setValue(v_scroll.minimum())
+
+    def _metadata_template_button(self) -> Optional[QPushButton]:
+        """Return the metadata template chip button, if present."""
+        for btn in getattr(self, "template_buttons", []):
+            if not isinstance(btn, QPushButton):
+                continue
+            text = btn.text().strip()
+            if text.startswith("בנה מטא") or text.startswith("בונה מטא"):
+                return btn
+        return None
+
+    def _set_chat_status(self, text: Optional[str]) -> None:
+        """Update the chat status label in the chat toolbar."""
+        label = getattr(self, "chat_status_label", None)
+        if not label:
+            return
+        if text:
+            label.setText(text)
+            label.setVisible(True)
+        else:
+            label.clear()
+            label.setVisible(False)
+
+    def _set_metadata_processing_state(
+        self,
+        active: bool,
+        banner_text: str = "מעבד תמלול...",
+        chip_text: str = "בונה מטא-דאטא...",
+    ) -> None:
+        """Toggle UI feedback for metadata building (chip + banner status)."""
+        chip = self._metadata_template_button()
+
+        if active:
+            if self._metadata_processing_active:
+                return
+            self._metadata_processing_active = True
+            if chip:
+                if self._metadata_chip_original_text is None:
+                    self._metadata_chip_original_text = chip.text()
+                chip.setText(chip_text)
+                chip.setEnabled(False)
+            self._set_chat_status(banner_text)
+        else:
+            self._metadata_processing_active = False
+            if chip:
+                if self._metadata_chip_original_text:
+                    chip.setText(self._metadata_chip_original_text)
+                chip.setEnabled(True)
+            self._metadata_chip_original_text = None
+            self._set_chat_status(None)
+
     def _ensure_chat_area_resized(self) -> None:
         """Gently expand chat height once a conversation starts, respecting font size."""
         if self._chat_resized_once:
@@ -2330,54 +2103,8 @@ class PodcastGeneratorWindow(QMainWindow):
 
     # --- System status bar -------------------------------------------------
     def _init_system_status_bar(self) -> None:
-        """Initialize the bottom system status banner with live metrics."""
-        banner_ready = all(
-            widget is not None
-            for widget in (self.system_status_banner, self._cpu_label, self._memory_label, self._battery_label, self._network_label)
-        )
-        if not banner_ready:
-            self.logger.warning("[System Status] Banner widgets not ready")
-            return
-
-        self.logger.info("[System Status] Initializing system status banner")
-        self._psutil_attempts += 1
-
-        psutil_mod = self._load_psutil_module()
-        if not psutil_mod:
-            self.logger.warning("[System Status] psutil not available - will retry")
-            for label in (self._cpu_label, self._memory_label, self._battery_label, self._network_label):
-                if label:
-                    label.setText("psutil חסר")
-                    label.setStyleSheet("font-weight:600; color:#94a3b8; padding:0 8px;")
-            if self.system_status_banner:
-                tooltip = "psutil לא הותקן או לא נטען. התקן עם: pip install psutil"
-                if self._psutil_last_error:
-                    tooltip += f"\nשגיאה: {self._psutil_last_error}"
-                self.system_status_banner.setToolTip(tooltip)
-            if self.statusBar():
-                msg = "psutil חסר – התקן psutil בסביבה (pip install psutil)"
-                if self._psutil_last_error:
-                    msg += f" ({self._psutil_last_error})"
-                self.statusBar().showMessage(msg, 8000)
-
-            # אל תרוץ בלי סוף: נסה פעמיים בלבד
-            if self._psutil_attempts >= 2:
-                self._psutil_retry_scheduled = False
-                return
-
-            if not self._psutil_retry_scheduled:
-                self._psutil_retry_scheduled = True
-                QTimer.singleShot(4000, self._init_system_status_bar)
-            return
-        self._psutil_mod = psutil_mod
-        self._psutil_retry_scheduled = False
-
-        self._system_metrics_timer = QTimer(self)
-        self._system_metrics_timer.setInterval(2500)
-        self._system_metrics_timer.timeout.connect(self._update_system_metrics)
-        QTimer.singleShot(400, self._update_system_metrics)
-        self._system_metrics_timer.start()
-        self.logger.info("[System Status] System metrics timer started")
+        """Delegate to system monitor controller."""
+        self.system_monitor.init_system_status_bar()
 
     def _status_label_style(self, severity: float) -> str:
         """Return a color style string based on severity (0=good, 1=bad)."""
@@ -2395,232 +2122,38 @@ class PodcastGeneratorWindow(QMainWindow):
         mem_text: Optional[str] = None,
         net_text: Optional[str] = None,
     ) -> None:
-        """Render the compact system badge in the header."""
-        if not self.system_badge_label:
-            return
-        if cpu_text:
-            self._system_badge_values["cpu"] = cpu_text
-        if mem_text:
-            self._system_badge_values["mem"] = mem_text
-        if net_text:
-            self._system_badge_values["net"] = net_text
-        badge_text = (
-            f"{self._system_badge_values['cpu']}  |  "
-            f"{self._system_badge_values['mem']}  |  "
-            f"{self._system_badge_values['net']}"
-        )
-        self.system_badge_label.setText(badge_text)
+        self.system_monitor.update_system_badge(cpu_text=cpu_text, mem_text=mem_text, net_text=net_text)
 
     def _update_system_metrics(self) -> None:
-        """Update system metrics (CPU, battery, network) in the status bar."""
-        # Check if labels are initialized
-        if not hasattr(self, '_cpu_label') or not self._cpu_label:
-            self.logger.debug("[System Status] Labels not initialized yet")
-            return
-        if not (self._cpu_label and self._memory_label and self._battery_label and self._network_label):
-            self.logger.debug("[System Status] Some labels are None")
-            return
-        
-        # Try to import psutil
-        psutil = self._psutil_mod or self._load_psutil_module()
-        if not psutil:
-            self.logger.debug("[System Status] psutil still missing during metrics update")
-            for label in (self._cpu_label, self._memory_label, self._battery_label, self._network_label):
-                if label:
-                    label.setText("psutil חסר")
-                    label.setStyleSheet("font-weight:600; color:#fbbf24; padding:0 8px;")
-            return
-
-        try:
-            # CPU usage - first call with interval=None may return None, so use a small interval
-            # Store last CPU value to avoid blocking
-            if not hasattr(self, '_last_cpu_percent'):
-                # First call - use small interval to get initial value
-                cpu_usage = psutil.cpu_percent(interval=0.1)
-                self._last_cpu_percent = cpu_usage if cpu_usage is not None else 0.0
-            else:
-                # Subsequent calls - non-blocking
-                cpu_usage = psutil.cpu_percent(interval=None)
-                if cpu_usage is None:
-                    cpu_usage = self._last_cpu_percent
-                else:
-                    self._last_cpu_percent = cpu_usage
-            
-            if cpu_usage < 0:
-                cpu_usage = 0.0
-            
-            cpu_display = f"🧠 {cpu_usage:.0f}%"
-            if self._cpu_label:
-                self._cpu_label.setText(cpu_display)
-                self._cpu_label.setStyleSheet(self._status_label_style(min(cpu_usage / 100.0, 1.0)))
-            self._update_system_badge(cpu_text=f"CPU {cpu_usage:.0f}%")
-        except Exception as e:
-            self.logger.warning("[System Status] CPU metric error: %s", e, exc_info=True)
-            if self._cpu_label:
-                self._cpu_label.setText("🧠 --")
-                self._cpu_label.setStyleSheet(self._status_label_style(1.0))
-            self._update_system_badge(cpu_text="CPU --")
-
-        try:
-            memory = psutil.virtual_memory()
-            mem_usage = getattr(memory, "percent", None)
-            if mem_usage is None:
-                raise RuntimeError("virtual_memory.percent unavailable")
-            if self._memory_label:
-                self._memory_label.setText(f"💾 {mem_usage:.0f}%")
-                self._memory_label.setStyleSheet(self._status_label_style(min(mem_usage / 100.0, 1.0)))
-            self._update_system_badge(mem_text=f"MEM {mem_usage:.0f}%")
-        except Exception as e:
-            self.logger.warning("[System Status] Memory metric error: %s", e)
-            if self._memory_label:
-                self._memory_label.setText("💾 --")
-                self._memory_label.setStyleSheet(self._status_label_style(1.0))
-            self._update_system_badge(mem_text="MEM --")
-
-        try:
-            battery = psutil.sensors_battery()
-            if self._battery_label:
-                if battery:
-                    icon = "🔌" if battery.power_plugged else "🔋"
-                    percent = battery.percent if battery.percent is not None else 100
-                    self._battery_label.setText(f"{icon} {percent:.0f}%")
-                    severity = 1 - min(percent / 100.0, 1.0)
-                    self._battery_label.setStyleSheet(self._status_label_style(severity))
-                else:
-                    self._battery_label.setText("🔌 AC")
-                    self._battery_label.setStyleSheet("padding:0 8px; font-weight:600; color:#38bdf8;")
-        except Exception as e:
-            self.logger.warning("[System Status] Battery metric error: %s", e)
-            if self._battery_label:
-                self._battery_label.setText("🔋 --")
-                self._battery_label.setStyleSheet(self._status_label_style(1.0))
-
-        try:
-            online, latency_ms = self._probe_internet_latency()
-            if self._network_label:
-                if online:
-                    self._network_label.setText(f"🌐 {latency_ms:.0f}ms")
-                    severity = min(latency_ms / 250.0, 1.0)
-                    self._network_label.setStyleSheet(self._status_label_style(severity))
-                    self._update_system_badge(net_text=f"NET {latency_ms:.0f}ms")
-                else:
-                    self._network_label.setText("🌐 ללא רשת")
-                    self._network_label.setStyleSheet(self._status_label_style(1.0))
-                    self._update_system_badge(net_text="NET offline")
-        except Exception as e:
-            self.logger.warning("[System Status] Network metric error: %s", e)
-            if self._network_label:
-                self._network_label.setText("🌐 --")
-                self._network_label.setStyleSheet(self._status_label_style(1.0))
-            self._update_system_badge(net_text="NET --")
+        self.system_monitor.update_system_metrics()
 
     def _load_psutil_module(self):
-        """Attempt to import psutil, including common local/venv paths."""
-        import importlib
-        candidates = []
-        self._psutil_last_error = None
-        try:
-            import psutil  # type: ignore
-            return psutil
-        except ImportError as exc:
-            self._psutil_last_error = str(exc)
-        except Exception as exc:
-            self._psutil_last_error = str(exc)
-            self.logger.error("[System Status] Unexpected psutil import error: %s", exc, exc_info=True)
-            return None
-
-        # Build candidate site-packages paths
-        project_root = Path(__file__).resolve().parents[2]
-        venv_env = os.getenv("VIRTUAL_ENV")
-        exe_path = Path(sys.executable).resolve()
-        for base in filter(None, [
-            venv_env,
-            project_root / ".venv",
-            project_root / "venv",
-            exe_path.parent.parent,  # typical <python>/Lib/site-packages
-        ]):
-            for lib_dir in ("Lib", "lib"):
-                candidate = Path(base) / lib_dir / "site-packages"
-                candidates.append(candidate)
-
-        for path in candidates:
-            if not path or not Path(path).exists():
-                continue
-            try:
-                if str(path) not in sys.path:
-                    sys.path.insert(0, str(path))
-                spec = importlib.util.find_spec("psutil")
-                if spec is None:
-                    continue
-                import psutil  # type: ignore
-                return psutil
-            except Exception as exc:  # pragma: no cover - best effort
-                self._psutil_last_error = str(exc)
-                self.logger.debug("[System Status] psutil load failed from %s: %s", path, exc)
-                continue
-
-        try:
-            import psutil  # type: ignore
-            return psutil
-        except Exception as exc:
-            self._psutil_last_error = str(exc)
-            self.logger.error("[System Status] psutil import final fail: %s", exc, exc_info=True)
-            return None
+        return self.system_monitor._load_psutil_module()
 
     def _probe_internet_latency(self, timeout: float = 1.5) -> tuple[bool, float]:
-        """Probe internet connectivity and measure latency."""
-        try:
-            start = time.perf_counter()
-            with socket.create_connection(("8.8.8.8", 53), timeout=timeout):
-                latency = (time.perf_counter() - start) * 1000
-            return True, latency
-        except (OSError, TimeoutError) as e:
-            self.logger.debug("[System Status] Network probe failed: %s", e)
-            return False, 0.0
-        except Exception as e:
-            self.logger.warning("[System Status] Unexpected network probe error: %s", e)
-            return False, 0.0
+        return self.system_monitor._probe_internet_latency(timeout)
 
     def _ensure_network_ready(self, action: str = "פעולה") -> bool:
-        """
-        Lightweight connectivity guard for network-dependent flows.
-        Shows the bottom banner in red and optional status message when offline.
-        """
-        online, latency_ms = self._probe_internet_latency()
-        if online:
-            return True
-
-        self.logger.warning("[Network] Blocked '%s' – offline", action)
-        self._show_network_error_banner()
-        if self.statusBar():
-            self.statusBar().showMessage("אין חיבור אינטרנט – נסו שוב כשתחזרו לרשת", 6000)
-        QMessageBox.warning(self, "אין אינטרנט", f"הפעולה '{action}' דורשת חיבור אינטרנט.\nבדקו את הרשת ונסו שוב.")
-        return False
+        return self.system_monitor.ensure_network_ready(action, dialog_parent=self)
 
     def _show_network_error_banner(self) -> None:
-        """Render an explicit offline state in the bottom banner."""
-        if self._network_label:
-            self._network_label.setText("🌐 No Internet Connection")
-            self._network_label.setStyleSheet(self._status_label_style(1.0))
-        self._update_system_badge(net_text="NET offline")
+        self.system_monitor.show_network_error_banner()
 
     def _reset_status_indicators(self) -> None:
-        """Return status labels/badge to a neutral state."""
-        if self._network_label:
-            self._network_label.setText("🌐 בודק...")
-            self._network_label.setStyleSheet("font-weight:600; color:#94a3b8; padding:0 8px;")
-        # Reset badge text
-        self._update_system_badge(net_text="NET --")
-        if self.statusBar():
-            self.statusBar().clearMessage()
+        self.system_monitor.reset_status_indicators()
 
     def _sync_transcript_to_session(self, path: Optional[Path]) -> None:
         """Send the active transcript path/snippet into the chat session context."""
         if not hasattr(self, "chat_session") or not self.chat_session:
             return
         if path and path.exists():
-            snippet = self._read_transcript_snippet(path, limit=4000)
-            self.chat_session.attach_transcript(path, snippet)
+            try:
+                absolute_path = path.expanduser().resolve()
+            except OSError:
+                absolute_path = path
+            snippet = self._read_transcript_snippet(absolute_path, limit=4000)
+            self.chat_session.attach_transcript(absolute_path, snippet)
+            self.logger.debug("[Transcript] Synced to session: %s", absolute_path)
         else:
             self.chat_session.attach_transcript(None, "")
 
@@ -2631,10 +2164,26 @@ class PodcastGeneratorWindow(QMainWindow):
             self._active_transcript = None
             self._sync_transcript_to_session(None)
             return
-        path = Path(path_text)
-        if not path.exists():
+        raw_path = Path(path_text)
+        try:
+            resolved_path = raw_path.expanduser().resolve()
+        except OSError:
+            resolved_path = raw_path.expanduser()
+
+        # Normalize the UI text to the resolved absolute path to avoid relative/OneDrive temp issues
+        normalized = str(resolved_path)
+        if normalized != path_text:
+            self.transcript_edit.blockSignals(True)
+            self.transcript_edit.setText(normalized)
+            self.transcript_edit.blockSignals(False)
+
+        if not resolved_path.exists():
+            self.logger.warning("[Transcript] Selected path does not exist: %s", resolved_path)
             return
-        canonical = str(path.resolve())
+        if not resolved_path.is_file():
+            self.logger.warning("[Transcript] Selected path is not a file: %s", resolved_path)
+            return
+        canonical = str(resolved_path)
         
         if canonical != self._active_transcript:
             # Logic for managing chat/metadata reset when transcript changes
@@ -2644,7 +2193,7 @@ class PodcastGeneratorWindow(QMainWindow):
             # Case 1: Attaching a transcript to an existing session that didn't have one (e.g. missing import)
             if not is_replacement and has_content:
                 self._active_transcript = canonical
-                self._log(f"תמלול שויך לפרויקט: {path.name}")
+                self._log(f"תמלול שויך לפרויקט: {resolved_path.name}")
                 # Do NOT reset session, just associate the file
                 return
 
@@ -2660,7 +2209,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 if reply == QMessageBox.StandardButton.No:
                     # User chose NOT to reset. Update path but keep session.
                     self._active_transcript = canonical
-                    self._log(f"תמלול הוחלף ל-{path.name} (השיחה נשמרה).")
+                    self._log(f"תמלול הוחלף ל-{resolved_path.name} (השיחה נשמרה).")
                     return
                 
                 # If Yes, fall through to reset
@@ -2670,11 +2219,12 @@ class PodcastGeneratorWindow(QMainWindow):
             self._reset_metadata_session()
 
         # Keep chat session aware of the transcript content
-        self._sync_transcript_to_session(path)
+        self.logger.debug("[Transcript] Active file set: %s", canonical)
+        self._sync_transcript_to_session(resolved_path)
 
         if not self._should_auto_seed():
             return
-        snippet = self._read_transcript_snippet(path)
+        snippet = self._read_transcript_snippet(resolved_path)
         if snippet:
             self._start_transcript_seed(snippet)
 
@@ -2683,7 +2233,8 @@ class PodcastGeneratorWindow(QMainWindow):
             with path.open("r", encoding="utf-8", errors="ignore") as handle:
                 return handle.read(limit)
         except OSError as exc:
-            self._append_log(f"[Seed] לא ניתן לקרוא את התמלול: {exc}")
+            self.logger.error("[Seed] Failed to read transcript %s: %s", path, exc)
+            self._append_log(f"[Seed] לא ניתן לקרוא את התמלול ({path}): {exc}")
             return ""
 
     def _start_transcript_seed(self, transcript_text: str) -> None:
@@ -2692,6 +2243,7 @@ class PodcastGeneratorWindow(QMainWindow):
         if self.seed_worker and self.seed_worker.isRunning():
             return
         self._set_chat_busy(True)
+        self._set_metadata_processing_state(True)
         self.seed_worker = MetadataSeedWorker(self.chat_session, transcript_text)
         self.seed_worker.result.connect(self._handle_seed_result)
         self.seed_worker.error.connect(self._handle_seed_error)
@@ -2716,6 +2268,7 @@ class PodcastGeneratorWindow(QMainWindow):
     def _seed_finished(self) -> None:
         self._set_chat_busy(False)
         self.seed_worker = None
+        self._set_metadata_processing_state(False)
 
     def _reset_metadata_session(self) -> None:
         """Deep reset of chat + metadata + UI state."""
@@ -2731,9 +2284,14 @@ class PodcastGeneratorWindow(QMainWindow):
         self.current_metadata = _default_metadata()
         if hasattr(self, "chat_history"):
             self.chat_history.clear()
+            self._reset_chat_scroll_top()
         # Reset banner/network to neutral state
         self._reset_status_indicators()
         self._update_metadata_preview()
+        try:
+            self._apply_chat_preferences()
+        except Exception:
+            pass
 
     def _should_auto_seed(self) -> bool:
         no_materials = self.materials_list.count() == 0 if hasattr(self, "materials_list") else True
@@ -3036,7 +2594,16 @@ class PodcastGeneratorWindow(QMainWindow):
     def _pick_file(self, line_edit: QLineEdit, filter_str: str = "All Files (*)") -> None:
         path, _ = QFileDialog.getOpenFileName(self, "בחר קובץ", "", filter_str)
         if path:
-            line_edit.setText(path)
+            resolved = Path(path).expanduser()
+            try:
+                resolved = resolved.resolve()
+            except OSError:
+                # If resolve fails (e.g., permission), keep expanded path
+                pass
+            line_edit.setText(str(resolved))
+            if line_edit is getattr(self, "transcript_edit", None):
+                # Immediately sync transcript selection
+                self._handle_transcript_changed()
 
     def _pick_directory(self, line_edit: QLineEdit) -> None:
         path = QFileDialog.getExistingDirectory(self, "בחר תיקייה", line_edit.text() or "")
@@ -4436,14 +4003,38 @@ class PodcastGeneratorWindow(QMainWindow):
 
     # --- History & analytics ----------------------------------------
     def _refresh_history(self) -> None:
-        self.history = HistoryManager(self.settings.output_base_dir)
+        try:
+            self.history = HistoryManager(self.settings.output_base_dir)
+        except Exception as exc:
+            self.logger.error("[_refresh_history] Failed to initialize history manager: %s", exc, exc_info=True)
+            QMessageBox.warning(
+                self,
+                "שגיאת היסטוריה",
+                f"לא ניתן לטעון היסטוריית פרויקטים (המשך ללא היסטוריה):\n{exc}",
+            )
+
+            class _EmptyHistory:
+                def all(self_inner) -> List[Dict]:
+                    return []
+
+                def record(self_inner, _: Dict) -> None:
+                    return
+
+                def clear_all_runs(self_inner) -> None:
+                    return
+
+            self.history = _EmptyHistory()
+
         self.active_history_entry = None
-        self._load_history_list()
-        self._refresh_project_tree()
-        self._refresh_timeline()
-        self.cost_totals = self._compute_cost_totals()
-        self._update_project_stats()
-        self._update_output_gallery()
+        try:
+            self._load_history_list()
+            self._refresh_project_tree()
+            self._refresh_timeline()
+            self.cost_totals = self._compute_cost_totals()
+            self._update_project_stats()
+            self._update_output_gallery()
+        except Exception as exc:
+            self.logger.error("[_refresh_history] Failed to refresh history UI: %s", exc, exc_info=True)
 
     def _load_history_list(self) -> None:
         self.projects_list.clear()
@@ -4974,7 +4565,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 align = Qt.AlignmentFlag.AlignRight if is_user else Qt.AlignmentFlag.AlignLeft
                 item.setTextAlignment(align)
                 self.chat_history.addItem(item)
-            self.chat_history.scrollToBottom()
+            self._reset_chat_scroll_top()
             self.logger.debug("[_apply_history_entry] Chat history restored with %d messages", 
                              self.chat_history.count())
         elif hasattr(self, "chat_history") and not chat_log:
@@ -5358,6 +4949,7 @@ class PodcastGeneratorWindow(QMainWindow):
     def _clear_chat_history(self) -> None:
         if hasattr(self, "chat_history"):
             self.chat_history.clear()
+            self._reset_chat_scroll_top()
         if self.chat_session:
             try:
                 self.chat_session.clear_chat()
@@ -5365,6 +4957,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.chat_session.reset()
         if self.chat_delegate and self.chat_history:
             self.chat_history.viewport().update()
+        self._set_metadata_processing_state(False)
 
     def _generate_transcript_from_chat(self) -> None:
         """
@@ -6035,8 +5628,42 @@ class PodcastGeneratorWindow(QMainWindow):
         try:
             return Settings.load()
         except Exception as exc:  # pragma: no cover
-            QMessageBox.critical(self, "שגיאה", f"לא ניתן לקרוא .env:\n{exc}")
-            raise
+            self.logger.error("[_load_settings] Settings.load failed: %s", exc, exc_info=True)
+            QMessageBox.warning(
+                self,
+                "הגדרות חסרות",
+                f"לא ניתן לקרוא .env או ההגדרות אינן שלמות.\n"
+                f"האפליקציה תעלה עם ברירות מחדל מוגנות.\n\n{exc}",
+            )
+            try:
+                return self._build_safe_settings_fallback(exc)
+            except Exception as fallback_exc:  # pragma: no cover - defensive
+                self.logger.error(
+                    "[_load_settings] Fallback settings failed: %s", fallback_exc, exc_info=True
+                )
+                raise
+
+    def _build_safe_settings_fallback(self, root_exc: Exception) -> Settings:
+        """Provide placeholder settings so the UI can start even when .env is invalid."""
+        self.logger.warning("[_build_safe_settings_fallback] Using stub settings due to: %s", root_exc)
+        return Settings(
+            openai_endpoint="https://placeholder.invalid",
+            openai_api_key="placeholder",
+            openai_deployment="placeholder",
+            speech_key="placeholder",
+            speech_region="placeholder",
+            speech_endpoint="",
+            azure_default_voice="he-IL-AvriNeural",
+            gemini_api_key="",
+            gemini_model="gemini-1.5-flash",
+            imagen_model="imagen-4.0-generate-001",
+            veo_model="veo-2.0-generate-001",
+            visual_generator="manim",
+            elevenlabs_api_key="",
+            default_tts_provider="azure",
+            google_cloud_project=None,
+            google_cloud_location="us-central1",
+        )
 
 
 def main() -> None:  # pragma: no cover - manual run

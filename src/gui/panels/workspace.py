@@ -194,13 +194,16 @@ def _build_chat_card(
     chat_card.setObjectName("ChatCard")
     chat_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
     chat_layout = QVBoxLayout(chat_card)
-    chat_layout.setContentsMargins(12, 18, 12, 12)
-    chat_layout.setSpacing(10)
+    # Tighter layout to reduce excess whitespace around the live chat header/actions
+    chat_layout.setContentsMargins(12, 2, 12, 8)
+    chat_layout.setSpacing(2)
     
     chat_layout.addWidget(section_label("שיחה חיה"))
     
     # Chat toolbar
     chat_toolbar = QHBoxLayout()
+    chat_toolbar.setContentsMargins(0, 2, 0, 0)
+    chat_toolbar.setSpacing(6)
     
     parent.chat_clear_btn = QPushButton("נקה שיחה")
     parent.chat_clear_btn.setToolTip("אפס את היסטוריית השיחה הנוכחית.")
@@ -211,6 +214,12 @@ def _build_chat_card(
     parent.chat_to_transcript_btn.setToolTip("צור תמלול מתוך השיחה וטען לפרויקט")
     parent.chat_to_transcript_btn.clicked.connect(parent._generate_transcript_from_chat)
     chat_toolbar.addWidget(parent.chat_to_transcript_btn)
+    
+    parent.chat_status_label = QLabel()
+    parent.chat_status_label.setObjectName("ChatStatusLabel")
+    parent.chat_status_label.setStyleSheet("color:#94a3b8;font-size:12px;padding:0 6px;")
+    parent.chat_status_label.setVisible(False)
+    chat_toolbar.addWidget(parent.chat_status_label)
     
     chat_toolbar.addStretch(1)
     chat_layout.addLayout(chat_toolbar)
@@ -223,7 +232,7 @@ def _build_chat_card(
         QSizePolicy.Policy.Expanding,
     )
     # Start compact but allow user to resize via splitter
-    parent.chat_history.setMinimumHeight(220)
+    parent.chat_history.setMinimumHeight(160)
     parent.chat_history.setWordWrap(True)
     parent.chat_history.setHorizontalScrollBarPolicy(
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff

@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from src.metadata import MetadataChatSession
 from src.utils.visual_metadata_builder import build_visual_metadata_locally
@@ -633,3 +633,57 @@ class VisualMetadataWorker(QThread):
                 return
 
         self.finished.emit(visual_metadata)
+
+
+class RecordingWorker(QObject):
+    """
+    Offloads 60s microphone recording to a worker thread so the UI stays responsive.
+    Emits status updates and completion/error signals for the Voice Lab flow.
+    """
+
+    status = pyqtSignal(str)
+    finished = pyqtSignal(Path, int)
+    error = pyqtSignal(str)
+
+    def __init__(self, duration: int = 60, samplerate: int = 44100, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self.duration = duration
+        self.samplerate = samplerate
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        """Signal the worker to stop recording gracefully."""
+        self._stop_requested = True
+        try:
+            import sounddevice as sd  # type: ignore
+            sd.stop()
+        except Exception:
+            pass
+
+    def run(self) -> None:
+        """Capture audio for the configured duration and emit status/signals."""
+        try:
+            import sounddevice as sd  # type: ignore
+            import numpy as np  # type: ignore
+            from scipy.io import wavfile  # type: ignore
+        except Exception as exc:
+            self.error.emit(f"Missing recording dependencies: {exc}")
+            return
+
+        try:
+            self.status.emit("מקליט... לחצו שוב להפסקה.")
+            frames = int(self.duration * self.samplerate)
+            data = sd.rec(frames, samplerate=self.samplerate, channels=1, dtype="float32")
+            sd.wait()
+
+            if self._stop_requested:
+                self.status.emit("הקלטה הופסקה.")
+                self.finished.emit(Path(), 0)
+                return
+
+            temp_path = Path("temp_recording.wav")
+            wavfile.write(temp_path, self.samplerate, (data * 32767).astype(np.int16))
+            self.status.emit("Recording saved: temp_recording.wav")
+            self.finished.emit(temp_path, len(data))
+        except Exception as exc:
+            self.error.emit(str(exc))
