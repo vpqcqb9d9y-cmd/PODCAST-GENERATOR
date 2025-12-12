@@ -5667,6 +5667,25 @@ class PodcastGeneratorWindow(QMainWindow):
 
 
 def main() -> None:  # pragma: no cover - manual run
+    def exception_hook(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        try:
+            log_path = Path("processing_log.txt")
+            log_path.write_text(error_msg, encoding="utf-8")
+        except Exception:
+            pass
+        try:
+            app = QApplication.instance()
+            if app:
+                QMessageBox.critical(None, "Critical Error", f"Unhandled exception:\n\n{error_msg}")
+        except Exception:
+            pass
+
+    sys.excepthook = exception_hook
+
     app = QApplication(sys.argv)
     window = PodcastGeneratorWindow()
     window.show()

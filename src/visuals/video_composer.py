@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar
 import tempfile
 import time
+import subprocess
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -323,8 +324,8 @@ class VideoComposer:
 
         if asset_paths is not None:
             existing = [p for p in asset_paths if p and p.exists()]
-            video_files = [p for p in existing if p.suffix.lower() in self.VIDEO_EXTENSIONS]
-            prioritized_images = [p for p in existing if p.suffix.lower() in self.IMAGE_EXTENSIONS]
+            video_files = sorted({p for p in existing if p.suffix.lower() in self.VIDEO_EXTENSIONS})
+            prioritized_images = sorted({p for p in existing if p.suffix.lower() in self.IMAGE_EXTENSIONS})
             raw_image_files = list(prioritized_images)
         else:
             for ext in self.VIDEO_EXTENSIONS:
@@ -406,14 +407,23 @@ class VideoComposer:
                 run_paths.log(fallback_msg)
             return self._build_slide_clips(dialogue_json, metadata, total_duration)
 
-        asset_files = sorted(video_files + image_files)
         assets: List[Tuple[str, Path]] = []
-        for path in asset_files:
-            suffix = path.suffix.lower()
-            if suffix in self.VIDEO_EXTENSIONS:
-                assets.append(("video", path))
-            elif suffix in self.IMAGE_EXTENSIONS:
-                assets.append(("image", path))
+        # Interleave videos and images to ensure hybrid timelines keep both
+        if video_files and image_files:
+            vids = sorted(video_files)
+            imgs = sorted(image_files)
+            for idx in range(max(len(vids), len(imgs))):
+                if idx < len(imgs):
+                    assets.append(("image", imgs[idx]))
+                if idx < len(vids):
+                    assets.append(("video", vids[idx]))
+        else:
+            for path in sorted(video_files + image_files):
+                suffix = path.suffix.lower()
+                if suffix in self.VIDEO_EXTENSIONS:
+                    assets.append(("video", path))
+                elif suffix in self.IMAGE_EXTENSIONS:
+                    assets.append(("image", path))
 
         total_assets = len(assets)
         base_slot = total_duration / total_assets if total_assets else total_duration
@@ -516,9 +526,8 @@ class VideoComposer:
         # CRITICAL FIX: Ensure video duration matches audio duration exactly
         # Use with_duration to satisfy tests and keep alignment simple.
         branch = "none"
-        if abs(video_duration - audio_duration) > 0.05:
-            branch = "with_duration"
-            base = self._apply_duration(base, audio_duration)
+        base = self._apply_duration(base, audio_duration)
+        branch = "with_duration"
 
         video_duration = base.duration
         # Always (re)generate SRT captions alongside the video
@@ -584,6 +593,8 @@ class VideoComposer:
         # FFMPEG on Windows has issues with non-ASCII paths
         temp_dir = tempfile.gettempdir()
         temp_audio_path = Path(temp_dir) / f"mbs_temp_audio_{time.time_ns()}.m4a"
+        temp_video_only = Path(temp_dir) / f"mbs_temp_video_only_{time.time_ns()}.mp4"
+        ffmpeg_fallback_needed = False
         
         try:
             # Verify temp audio path directory exists
@@ -598,40 +609,100 @@ class VideoComposer:
             # Write with explicit audio=True and all audio parameters
             # CRITICAL: audio=True is required to force audio track inclusion
             # Use high-quality audio settings for clear Hebrew speech
-            final.write_videofile(
-                str(output_file),
-                codec="libx264",
-                audio=True,  # CRITICAL: Explicitly enable audio
-                audio_codec="aac",
-                audio_fps=44100,  # Standard audio sample rate (matches stitcher output)
-                audio_bitrate="256k",  # Higher bitrate for better clarity (especially Hebrew)
-                audio_bufsize=3000,  # Larger buffer for stability
-                audio_nbytes=4,  # 32-bit audio for better quality
-                fps=30,
-                threads=4,
-                ffmpeg_params=["-pix_fmt", "yuv420p"],
-                logger=None,  # Suppress console output to avoid encoding errors with Hebrew
-                write_logfile=False,
-                temp_audiofile=str(temp_audio_path),
-            )
+            try:
+                final.write_videofile(
+                    str(output_file),
+                    codec="libx264",
+                    audio=True,  # CRITICAL: Explicitly enable audio
+                    audio_codec="aac",
+                    audio_fps=44100,  # Standard audio sample rate (matches stitcher output)
+                    audio_bitrate="256k",  # Higher bitrate for better clarity (especially Hebrew)
+                    audio_bufsize=3000,  # Larger buffer for stability
+                    audio_nbytes=4,  # 32-bit audio for better quality
+                    fps=30,
+                    threads=4,
+                    ffmpeg_params=["-pix_fmt", "yuv420p"],
+                    logger=None,  # Suppress console output to avoid encoding errors with Hebrew
+                    write_logfile=False,
+                    temp_audiofile=str(temp_audio_path),
+                )
+            except Exception as exc:
+                ffmpeg_fallback_needed = True
+                self.logger.error("MoviePy write_videofile failed, will attempt FFmpeg fallback: %s", exc)
             
             # Verify output file has audio by checking file size
-            if output_file.exists():
+            if not ffmpeg_fallback_needed and output_file.exists():
                 file_size = output_file.stat().st_size
-                # A video with audio should be significantly larger than video-only
                 min_expected_size = int(audio_duration * 15000)  # ~15KB per second minimum
                 if file_size < min_expected_size:
                     self.logger.warning(
                         "Output file may be missing audio. Size: %d bytes, expected at least: %d bytes",
                         file_size, min_expected_size
                     )
+                    ffmpeg_fallback_needed = True
                 else:
-                    self.logger.info(
-                        "Video file created successfully. Size: %d bytes (%.2f MB), expected audio duration: %.2fs",
-                        file_size, file_size / (1024 * 1024), audio_duration
-                    )
-            else:
+                    try:
+                        with VideoFileClip(str(output_file)) as probe_clip:
+                            if probe_clip.audio is None:
+                                self.logger.warning("Probe detected missing audio track; triggering FFmpeg fallback.")
+                                ffmpeg_fallback_needed = True
+                    except Exception as probe_exc:
+                        self.logger.warning("Probe failed, will attempt FFmpeg fallback: %s", probe_exc)
+                        ffmpeg_fallback_needed = True
+                    if not ffmpeg_fallback_needed:
+                        self.logger.info(
+                            "Video file created successfully. Size: %d bytes (%.2f MB), expected audio duration: %.2fs",
+                            file_size, file_size / (1024 * 1024), audio_duration
+                        )
+            elif not output_file.exists():
                 self.logger.error("CRITICAL: Output file was not created: %s", output_file)
+                ffmpeg_fallback_needed = True
+
+            if ffmpeg_fallback_needed:
+                self.logger.info("Starting FFmpeg audio mux fallback...")
+                # Export video-only stream
+                try:
+                    base.without_audio().write_videofile(
+                        str(temp_video_only),
+                        codec="libx264",
+                        audio=False,
+                        fps=30,
+                        threads=4,
+                        ffmpeg_params=["-pix_fmt", "yuv420p"],
+                        logger=None,
+                        write_logfile=False,
+                    )
+                except Exception as vo_exc:
+                    self.logger.error("Failed to export video-only stream for FFmpeg fallback: %s", vo_exc)
+                    raise
+
+                ffmpeg_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(temp_video_only),
+                    "-i",
+                    str(audio_file),
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    str(output_file),
+                ]
+                result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+                if result.returncode != 0 or not output_file.exists():
+                    self.logger.error(
+                        "FFmpeg fallback failed (code %s): %s %s",
+                        result.returncode,
+                        result.stdout,
+                        result.stderr,
+                    )
+                    raise RuntimeError("FFmpeg fallback failed to mux audio into video.")
+                self.logger.info("FFmpeg fallback succeeded: %s", output_file)
         finally:
             audio_mix.close()
             audio.close()
@@ -645,6 +716,11 @@ class VideoComposer:
                     temp_audio_path.unlink()
                 except OSError:
                     pass  # Ignore cleanup errors
+            if temp_video_only.exists():
+                try:
+                    temp_video_only.unlink()
+                except OSError:
+                    pass
         
         self.logger.info("Video exported successfully: %s", output_file)
         return output_file

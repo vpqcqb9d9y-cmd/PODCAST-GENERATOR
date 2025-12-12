@@ -552,6 +552,14 @@ class LecturePipeline:
                 base_assets: List[Path] = []
                 base_assets.extend(ai_visuals)
                 base_assets.extend(scene_paths)
+                try:
+                    self.logger.info(
+                        "[LecturePipeline] Visual assets pre-guardian: %d images, %d videos",
+                        len([p for p in base_assets if p.suffix.lower() in ('.png', '.jpg', '.jpeg')]),
+                        len([p for p in base_assets if p.suffix.lower() in ('.mp4', '.mov', '.webm')]),
+                    )
+                except Exception:
+                    pass
 
                 guardian_result = guardian.optimize_and_fix(
                     metadata=metadata,
@@ -573,6 +581,14 @@ class LecturePipeline:
 
                 optimized_assets = merged_assets
                 run_paths.log(f"Visual assets prepared for composition: {len(optimized_assets)} item(s).")
+                try:
+                    self.logger.info(
+                        "[LecturePipeline] Visual assets post-guardian: %d images, %d videos",
+                        len([p for p in optimized_assets if p.suffix.lower() in ('.png', '.jpg', '.jpeg')]),
+                        len([p for p in optimized_assets if p.suffix.lower() in ('.mp4', '.mov', '.webm')]),
+                    )
+                except Exception:
+                    pass
                 if guardian_result.adaptive_timeline:
                     run_paths.log("ProductionGuardian: Adaptive timeline enabled (stretching available visuals).")
                 if guardian_result.audio_normalized:

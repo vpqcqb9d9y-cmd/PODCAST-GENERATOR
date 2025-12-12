@@ -764,6 +764,21 @@ class GoogleAIVisualGenerator:
         img.save(str(output_path), quality=95)
         self.logger.info("Placeholder image created: %s", output_path)
     
+    def _generate_image_with_fallback(self, prompt: str, output_path: Path, aspect_ratio: str = "16:9") -> Optional[Path]:
+        """
+        Attempt Imagen generation and fall back to placeholder on any failure.
+        """
+        try:
+            return self._generate_image(prompt, output_path, aspect_ratio=aspect_ratio)
+        except Exception as exc:
+            self.logger.warning("Imagen generation failed, using placeholder: %s", exc, exc_info=True)
+            try:
+                self._generate_placeholder_image(prompt, output_path, aspect_ratio=aspect_ratio)
+                return output_path
+            except Exception as placeholder_exc:  # pragma: no cover - defensive
+                self.logger.error("Placeholder generation failed after Imagen error: %s", placeholder_exc, exc_info=True)
+                return None
+    
     def _generate_educational_placeholder(
         self,
         prompt: str,
@@ -979,7 +994,7 @@ class GoogleAIVisualGenerator:
                 run_paths.log(
                     f"🎨 Generating Image {len(generated_paths) + 1}/{max_images or len(images)} – {title}"
                 )
-                result = self._generate_image(enhanced_prompt, output_path, aspect_ratio="16:9")
+                result = self._generate_image_with_fallback(enhanced_prompt, output_path, aspect_ratio="16:9")
                 
                 if result:
                     generated_paths.append(result)
@@ -1225,7 +1240,11 @@ class GoogleAIVisualGenerator:
             if len(key_concepts) >= 3 and images_generated < target_count:
                 map_path = run_paths.visuals_dir / "network_map.png"
                 run_paths.log(f"🎨 Generating Image {images_generated + 1}/{target_count} – concept map")
-                result = self.generate_network_map(key_concepts, metadata, map_path)
+                try:
+                    result = self.generate_network_map(key_concepts, metadata, map_path)
+                except Exception as exc:
+                    self.logger.warning("Network map generation failed, using placeholder: %s", exc, exc_info=True)
+                    result = self._generate_placeholder_image("network map", map_path)
                 if result:
                     generated_paths.append(result)
                     images_generated += 1
@@ -1239,11 +1258,15 @@ class GoogleAIVisualGenerator:
                 run_paths.log(
                     f"🎨 Generating Image {images_generated + 1}/{target_count} – concept: {concept}"
                 )
-                result = self.generate_concept_illustration(
-                    concept=concept,
-                    context=topic,
-                    output_path=concept_path,
-                )
+                try:
+                    result = self.generate_concept_illustration(
+                        concept=concept,
+                        context=topic,
+                        output_path=concept_path,
+                    )
+                except Exception as exc:
+                    self.logger.warning("Concept illustration failed, using placeholder: %s", exc, exc_info=True)
+                    result = self._generate_placeholder_image(concept, concept_path)
                 if result:
                     generated_paths.append(result)
                     images_generated += 1
@@ -1252,10 +1275,14 @@ class GoogleAIVisualGenerator:
             if images_generated < target_count:
                 bg_path = run_paths.visuals_dir / "slide_background.png"
                 run_paths.log(f"🎨 Generating Image {images_generated + 1}/{target_count} – slide background")
-                result = self.generate_slide_background(
-                    topic=topic_desc,
-                    output_path=bg_path,
-                )
+                try:
+                    result = self.generate_slide_background(
+                        topic=topic_desc,
+                        output_path=bg_path,
+                    )
+                except Exception as exc:
+                    self.logger.warning("Slide background generation failed, using placeholder: %s", exc, exc_info=True)
+                    result = self._generate_placeholder_image(topic_desc, bg_path)
                 if result:
                     generated_paths.append(result)
                     images_generated += 1
@@ -1275,7 +1302,7 @@ class GoogleAIVisualGenerator:
                 run_paths.log(
                     f"🎨 Generating Image {images_generated + 1}/{target_count} – {visual_type} visual"
                 )
-                result = self._generate_image(prompt, visual_path, aspect_ratio="16:9")
+                result = self._generate_image_with_fallback(prompt, visual_path, aspect_ratio="16:9")
                 if result:
                     generated_paths.append(result)
                     images_generated += 1
@@ -1290,7 +1317,7 @@ class GoogleAIVisualGenerator:
                 run_paths.log(
                     f"🎨 Generating Image {images_generated + 1}/{target_count} – summary infographic"
                 )
-                result = self._generate_image(summary_prompt, summary_path, aspect_ratio="16:9")
+                result = self._generate_image_with_fallback(summary_prompt, summary_path, aspect_ratio="16:9")
                 if result:
                     generated_paths.append(result)
                     images_generated += 1

@@ -12,6 +12,12 @@
 - Cost center, Log center, דפדפן היסטוריה, גיבוי/שחזור.
 - סקריפטי CLI להרצות pipeline ללא GUI ולבניית visual metadata.
 
+## Hotfix 3.2.1
+- תיקון hybrid: שילוב תקין של תמונות AI (Imagen/VEO) עם אנימציות Manim.
+- אמינות אודיו/וידאו: סנכרון משך אודיו, בדיקת חיבור, ונפילת FFMpeg אוטומטית אם MoviePy נכשל.
+- GUI חסין קריסות: sys.excepthook גלובלי שכותב ל־`processing_log.txt` ומציג הודעת שגיאה.
+- שרידות API: כשלי Gemini/Imagen מייצרים מיד פלייסהולדרים במקום לעצור את הפייפליין.
+
 ## Installation
 1. **Prerequisites**
    - Python 3.9+
