@@ -911,6 +911,7 @@ class GoogleAIVisualGenerator:
         generate_images: bool = True,
         generate_videos: bool = False,
         max_images: Optional[int] = None,
+        metadata: Optional[Dict] = None,
     ) -> List[Path]:
         """
         Generate visuals using detailed visual metadata with professional prompts.
@@ -946,6 +947,10 @@ class GoogleAIVisualGenerator:
             + (f" (capped at {max_images})" if max_images else "")
         )
         
+        topic_text = (metadata or {}).get("topic", "") if metadata else ""
+        topic_lower = topic_text.lower()
+        non_cloud_topic = not any(word in topic_lower for word in ["azure", "cloud"])
+
         if generate_images and images:
             self.logger.info("=" * 60)
             self.logger.info("      GENERATING IMAGES FROM VISUAL METADATA")
@@ -977,6 +982,19 @@ class GoogleAIVisualGenerator:
                     # Append style hints to prompt if not already included
                     if style.lower() not in prompt.lower():
                         enhanced_prompt = f"{prompt} {style}"
+
+                # Guard against Azure hallucinations for non-cloud topics
+                if non_cloud_topic and "azure" in enhanced_prompt.lower():
+                    warning_msg = (
+                        f"Detected hallucinated 'Azure' context for topic '{topic_text}'. "
+                        "Replacing prompt with abstract safe fallback."
+                    )
+                    self.logger.warning(warning_msg)
+                    run_paths.log(f"⚠ {warning_msg}")
+                    enhanced_prompt = (
+                        f"Artistic abstract background representing {topic_text or 'the topic'}, "
+                        "high quality, 4K, cinematic, no vendor branding."
+                    )
                 
                 # Log detailed prompt info
                 self.logger.info("-" * 60)
@@ -1189,6 +1207,7 @@ class GoogleAIVisualGenerator:
                 generate_images,
                 generate_videos,
                 max_images=target_count,
+                metadata=metadata,
             )
             placeholder_events = self.consume_placeholder_events()
             if placeholder_events:

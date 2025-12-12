@@ -71,13 +71,16 @@ class VisualMetadataBuilder:
             images.append(self._filler_image(index))
             index += 1
 
+        aesthetics, style_guide = self._general_style_profile()
+
         result: Dict[str, Any] = {
             "background": self.summary or f"סיפור חזותי עבור {self.topic}",
             "general_notes": {
-                "aesthetics": "סטודיו טכנולוגי ישראלי, צילום דוקו-סינמטי עם נגיעות אינפוגרפיקה.",
-                "style_guide": "שילוב צילום אנשים אמיתי + שכבות גרפיקה בעברית RTL, התאמה לפודקאסט לימודי.",
+                "aesthetics": aesthetics,
+                "style_guide": style_guide,
                 "technical_specs": "1920x1080, יחס 16:9, 30fps, ניגודיות גבוהה לטקסט עברי.",
                 "hebrew_support": "כל הכותרות והחיצים בעברית RTL, פונט כמו Assistant/Alef.",
+                "guardrails": "התאם תמיד לנושא, אל תעתיק דוגמאות מערכתיות, הימנע מאזכורי מותגים (Azure/Cloud) אם לא הוזכרו במפורש.",
             },
             "images": images,
         }
@@ -91,34 +94,34 @@ class VisualMetadataBuilder:
 
     def _hero_image(self, index: int) -> Dict[str, Any]:
         palette = ISRAELI_COLOR_PALETTES[0]
+        style_profile = self._visual_style_for_topic()
         prompt = (
-            "Cinematic Israeli tech studio wide shot: mentor and learner stand near a "
-            "glass board while Hebrew annotations float explaining Azure Virtual Networks "
-            f"for '{self.topic}'. Large holographic cloud diagram, Tel Aviv skyline lights "
-            "outside, dramatic lighting, 4K detail."
+            f"Cinematic opening frame introducing '{self.topic}'. {style_profile['vibe']}. "
+            f"Visuals reflect the story/lyrics: {self.summary[:140] if self.summary else 'תיאור קצר של הנושא'}. "
+            f"Color mood: {palette['colors']}. High-quality 4K, Hebrew-friendly composition."
         )
         return self._image_payload(
             index=index,
             title="פתיח חזותי",
             prompt=prompt,
-            style="cinematic documentary + infographic overlays",
-            mood="מרגש ומקצועי",
+            style=style_profile["style"],
+            mood=style_profile["mood"],
             palette=palette["colors"],
-            context="פריים פתיחה שמכניס את הצופה לעולם הרשתות ב-Azure",
+            context=f"פריים פתיחה שמכניס את הצופה לעולם {self.topic}",
         )
 
     def _concept_image(self, index: int, concept: str) -> Dict[str, Any]:
         palette = ISRAELI_COLOR_PALETTES[index % len(ISRAELI_COLOR_PALETTES)]
+        style_profile = self._visual_style_for_topic()
         prompt = (
-            f"Detailed Israeli workspace close-up illustrating '{concept}' in Azure networking. "
-            "Holographic diagram hovering above a laptop, Hebrew labels for inputs/outputs, "
-            "soft depth of field, cinematic color grade."
+            f"Visualize the idea '{concept}' as part of {self.topic}. {style_profile['vibe']}. "
+            f"Use Hebrew labels where text appears. Avoid generic tech labs unless the topic demands it."
         )
         return self._image_payload(
             index=index,
             title=f"המחשת {concept}",
             prompt=prompt,
-            style="modern educational illustration with photoreal base",
+            style=style_profile["style"],
             mood=palette["mood"],
             palette=palette["colors"],
             context=f"הצגה חזותית של המושג {concept}",
@@ -126,25 +129,28 @@ class VisualMetadataBuilder:
 
     def _labs_image(self, index: int) -> Dict[str, Any]:
         palette = ISRAELI_COLOR_PALETTES[1]
+        style_profile = self._visual_style_for_topic()
         prompt = (
-            "Israeli student working on Azure portal during a lab exercise, Hebrew sticky notes "
-            "listing steps for creating VNets and NSG rules, warm lighting, cinematic over-the-shoulder shot."
+            f"Hands-on moment that matches '{self.topic}': learner practicing the material. "
+            f"{style_profile['vibe']}. Use props that fit the domain (music/art: instruments/stage; "
+            f"technical: whiteboard/devices), warm lighting, authentic Hebrew context."
         )
         return self._image_payload(
             index=index,
             title="תרגול מעשי",
             prompt=prompt,
-            style="documentary photography with UI callouts",
-            mood="מעשי ומאוורר",
+            style=style_profile["style"],
+            mood=style_profile["mood"],
             palette=palette["colors"],
-            context="מחישת המעבדות שהוזכרו בשיחה",
+            context="המחשת תרגול או תהליך מרכזי שהוזכר בשיחה",
         )
 
     def _quote_image(self, index: int, quote: str) -> Dict[str, Any]:
         palette = ISRAELI_COLOR_PALETTES[2]
+        style_profile = self._visual_style_for_topic()
         prompt = (
-            "Split-screen composition showing two podcast hosts in a modern Israeli studio, "
-            "with Hebrew subtitles of a highlighted quote floating between them, warm cinematic lighting."
+            f"Quote spotlight from the dialogue: {quote[:180]}. {style_profile['vibe']}. "
+            "Design for clear Hebrew typography with high contrast."
         )
         return self._image_payload(
             index=index,
@@ -158,38 +164,81 @@ class VisualMetadataBuilder:
 
     def _filler_image(self, index: int) -> Dict[str, Any]:
         palette = ISRAELI_COLOR_PALETTES[index % len(ISRAELI_COLOR_PALETTES)]
+        style_profile = self._visual_style_for_topic()
         prompt = (
-            "Stylized Azure control center dashboard floating above a Mediterranean cityscape, "
-            "Hebrew legends and arrows explain network traffic flow, vibrant gradients."
+            f"Complementary abstract visual for '{self.topic}'. {style_profile['vibe']}. "
+            f"Hebrew-friendly composition, avoids brand names, focuses on mood '{palette['mood']}'."
         )
         return self._image_payload(
             index=index,
             title=f"אלמנט חזותי {index}",
             prompt=prompt,
-            style="futuristic infographic + photography blend",
-            mood="חדשני",
+            style=style_profile["style"],
+            mood=style_profile["mood"],
             palette=palette["colors"],
             context="אלמנט משלים ללולאת הווידאו",
         )
 
     def _video_block(self) -> Dict[str, Any]:
+        style_profile = self._visual_style_for_topic()
         scenes = [
-            "מבוא ל-VNet והבדלה מהרשת הארגונית",
-            "חלוקה ל-Subnets כמו חדרים בבית מודרני",
-            "חוקי NSG מוצגים כדלתות עם חיישנים",
-            "Load Balancer מחלק תנועה בין שירותים בעברית",
+            f"מבוא לנושא: {self.topic}",
+            "רגע הדגמה או ביצוע מרכזי",
+            "הדגשת רגש/רעיון מוביל",
+            "סיום עם מסר מרכזי או קריאה לפעולה",
         ]
         return {
             "prompt": (
-                "Cinematic montage of Israeli engineers configuring Azure networking: diagramming VNets, "
-                "splitting into Subnets, applying NSG protections, balancing traffic with Load Balancer. "
-                "Hebrew motion-graphics callouts, no generic stock footage."
+                f"Cinematic montage about '{self.topic}'. {style_profile['vibe']}. "
+                "Show people or objects relevant to the story, with Hebrew callouts. Avoid vendor branding."
             ),
             "duration_seconds": 180,
             "scenes": scenes,
-            "music_sync": "מתחיל בסקרנות, עובר לשלב פעולה ומסתיים בתחושת הישג",
-            "style_guide": "דוקו-טכנולוגי, שילוב אנשים אמיתיים וגרפיקות Azure, טקסט RTL ברור.",
+            "music_sync": "מתחיל בסקרנות, עובר לפעולה ומסתיים בתחושת הישג או רגש חם",
+            "style_guide": style_profile["style"],
         }
+
+    def _visual_style_for_topic(self) -> Dict[str, str]:
+        """Map topic/metadata cues into a visual style profile."""
+        topic_lower = (self.topic or "").lower()
+        mood = (self.metadata.get("mood") or "").lower()
+        summary_lower = (self.summary or "").lower()
+
+        tech_keywords = ["cloud", "azure", "aws", "tech", "data", "network", "ai", "machine"]
+        art_keywords = ["music", "song", "art", "culture", "design", "creative", "מוזיקה", "שיר", "תרבות"]
+
+        is_tech = any(k in topic_lower for k in tech_keywords) or any(k in summary_lower for k in tech_keywords)
+        is_art = any(k in topic_lower for k in art_keywords) or any(k in summary_lower for k in art_keywords)
+
+        if "cloud" in mood or "tech" in mood:
+            is_tech = True
+        if any(k in mood for k in ["art", "music", "culture"]):
+            is_art = True
+
+        if is_tech and not is_art:
+            return {
+                "style": "modern data-visualization studio, clean gradients, crisp lighting",
+                "vibe": "Modern professional studio with data viz accents, respectful and clear",
+                "mood": "מקצועי וחדשני",
+            }
+        if is_art:
+            return {
+                "style": "cinematic documentary, warm lighting, emotional storytelling",
+                "vibe": "Cinematic documentary feel with expressive framing and human focus",
+                "mood": "חם ומרגש",
+            }
+        return {
+            "style": "professional educational illustration, clean modern design",
+            "vibe": "Professional educational look tailored to the specific topic",
+            "mood": "חינוכי ומזמין",
+        }
+
+    def _general_style_profile(self) -> tuple[str, str]:
+        profile = self._visual_style_for_topic()
+        return (
+            profile["vibe"],
+            f"{profile['style']}; always tailor visuals to the given topic and avoid vendor-specific branding.",
+        )
 
     @staticmethod
     def _image_payload(

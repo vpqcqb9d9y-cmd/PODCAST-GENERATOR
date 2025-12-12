@@ -2,16 +2,15 @@
 
 Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
 
-> **Current version: v3.3.1** | **Build date: 2025-12-12**  
+> **Current version: v3.3.2** | **Build date: 2025-12-12**  
 > Hebrew guide: see [`README.he.md`](README.he.md)
 
 ---
 
-## Hotfix 3.3.1
-- **Manim dynamic topics**: Dialogue text now drives LLM-picked scene concepts—works for non-technical/song topics without keyword lists.
-- **Unicode-safe visuals**: OpenCV image loads use `np.fromfile + imdecode`, preventing false corruption on Hebrew/Unicode paths.
-- **Quality robustness**: Video analysis falls back to MoviePy if OpenCV fails; image checks use Unicode-safe reads and flag too-short prompts.
-- **Guardian safety**: Black-frame removal kept, but read errors no longer delete assets on Windows paths.
+## Hotfix 3.3.2
+- **Topic-true visuals**: Removed Azure/vendor defaults from visual metadata; prompts now adapt to topic/mood (tech vs art/music) with hallucination guardrails.
+- **Visible subtitles**: Final render burns SRT via FFmpeg with Hebrew-safe Arial + black box; MoviePy fallback parses UTF-8 and reshapes RTL.
+- **Liveliness**: Stronger Ken Burns (zoom 1.15 + drift) and timeline respects dialogue timestamps when available.
 
 ---
 

@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar
 import tempfile
 import time
 import subprocess
+import random
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -46,22 +47,30 @@ class VideoComposer:
     def __post_init__(self) -> None:
         self.logger = get_logger(self.__class__.__name__)
 
-    def apply_ken_burns(self, clip: VideoClip, zoom_factor: float = 1.04) -> VideoClip:
+    def apply_ken_burns(self, clip: VideoClip, zoom_factor: float = 1.15) -> VideoClip:
         """
-        Apply a gentle Ken Burns pan/zoom to a static clip.
+        Apply a stronger Ken Burns pan/zoom to a static clip with subtle drift.
         """
         duration = max(getattr(clip, "duration", 0.0) or 0.0, 0.001)
 
         def _scale(t: float) -> float:
             return 1.0 + (zoom_factor - 1.0) * (t / duration)
 
+        # Randomize drift direction slightly to keep shots feeling alive
+        x_drift = random.uniform(-0.08, 0.08) * clip.w
+        y_drift = random.uniform(-0.08, 0.08) * clip.h
+        start_x = clip.w / 2
+        start_y = clip.h / 2
+        end_x = start_x + x_drift
+        end_y = start_y + y_drift
+
         zoomed = clip.fx(vfx.resize, _scale)
         return zoomed.fx(
             vfx.crop,
             width=clip.w,
             height=clip.h,
-            x_center=clip.w / 2,
-            y_center=clip.h / 2,
+            x_center=lambda t: start_x + (end_x - start_x) * (t / duration),
+            y_center=lambda t: start_y + (end_y - start_y) * (t / duration),
         )
 
     def _load_cv2(self):
@@ -316,6 +325,15 @@ class VideoComposer:
         audio_clip.close()
         turn_count = max(len(dialogue_json.get("dialogue", [])), 1)
 
+        # Prefer actual timestamps if present for tighter audio-visual sync
+        turn_durations: List[float] = []
+        for turn in dialogue_json.get("dialogue", []):
+            start = turn.get("start") or turn.get("ts_start")
+            end = turn.get("end") or turn.get("ts_end")
+            if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end > start:
+                turn_durations.append(float(end - start))
+        has_aligned_timings = bool(turn_durations) and len(turn_durations) == turn_count
+
         # More robust file detection
         video_files: List[Path] = []
         image_files: List[Path] = []
@@ -429,11 +447,16 @@ class VideoComposer:
 
         total_assets = len(assets)
         base_slot = total_duration / total_assets if total_assets else total_duration
+        per_asset_durations: List[float] = []
+        if has_aligned_timings and total_assets:
+            for i in range(total_assets):
+                per_asset_durations.append(turn_durations[min(i, len(turn_durations) - 1)])
+
         clips: List[VideoClip] = []
         current_start = 0.0
         remaining = total_duration
 
-        for asset_type, media in assets:
+        for asset_index, (asset_type, media) in enumerate(assets):
             if remaining <= 0:
                 break
 
@@ -448,7 +471,12 @@ class VideoComposer:
                     clip = self._apply_start(clip, current_start)
                     self.logger.info("Added video clip %s (%.2fs)", media.name, duration)
                 else:
-                    duration = min(max(base_slot, self.MIN_IMAGE_DURATION), remaining)
+                    target_duration = (
+                        per_asset_durations[asset_index]
+                        if asset_index < len(per_asset_durations)
+                        else base_slot
+                    )
+                    duration = min(max(target_duration, self.MIN_IMAGE_DURATION), remaining)
                     # Ensure image is properly loaded and resized for video
                     try:
                         from PIL import Image
@@ -525,13 +553,9 @@ class VideoComposer:
         video_duration = base.duration
         self.logger.info("Video duration before sync: %.2f seconds", video_duration)
         
-        # CRITICAL FIX: Ensure video duration matches audio duration exactly
-        # Use with_duration to satisfy tests and keep alignment simple.
-        branch = "none"
+        # Ensure video duration matches audio duration exactly
         base = self._apply_duration(base, audio_duration)
-        branch = "with_duration"
 
-        video_duration = base.duration
         # Always (re)generate SRT captions alongside the video
         captions_path = output_file.parent / "captions.srt"
         if dialogue_json:
@@ -540,171 +564,134 @@ class VideoComposer:
             except Exception as exc:
                 self.logger.error("Failed to write captions.srt: %s", exc)
 
-        # Burn subtitles (RTL-safe shaping for Hebrew)
-        final_video = base
-        if captions_path.exists():
-            def _text_factory(txt: str) -> TextClip:
-                shaped = arabic_reshaper.reshape(txt)
-                bidi_text = get_display(shaped)
-                return TextClip(
-                    bidi_text,
-                    fontsize=55,
-                    font="Arial",
-                    color="white",
-                    stroke_color="black",
-                    stroke_width=2,
-                    method="caption",
-                    size=(int(base.w * 0.9), None),
-                    align="center",
-                )
-
-            try:
-                subs = SubtitlesClip(str(captions_path), _text_factory).set_position(
-                    ("center", "bottom")
-                )
-                subs = subs.set_duration(audio_duration)
-                final_video = CompositeVideoClip([base, subs])
-            except Exception as exc:
-                self.logger.error("Failed to overlay subtitles: %s", exc)
-                final_video = base
-
-        # Create composite audio and attach to video
+        # Build clean video with audio first (no burned subtitles)
         audio_mix = CompositeAudioClip([audio])
-        
-        # Attach audio track (MoviePy 2.x compatible)
-        attach_fn = getattr(final_video, "with_audio", None) or getattr(final_video, "set_audio", None)
-        attached_clip = attach_fn(audio_mix) if attach_fn else final_video.set_audio(audio_mix)
+        attach_fn = getattr(base, "with_audio", None) or getattr(base, "set_audio", None)
+        attached_clip = attach_fn(audio_mix) if attach_fn else base.set_audio(audio_mix)
         if getattr(attached_clip, "audio", None) is None:
             self.logger.error("CRITICAL: Audio failed to attach to video!")
             raise RuntimeError("Failed to attach audio to video. Audio track is None.")
         final = attached_clip.set_duration(audio_duration)
-        
-        # Verify audio is attached
+
         if final.audio is None:
             self.logger.error("CRITICAL: Audio failed to attach to video!")
             raise RuntimeError("Failed to attach audio to video. Audio track is None.")
         self.logger.info(
-            "Final video ready: duration=%.2fs, has_audio=%s",
+            "Final video (pre-subtitles) ready: duration=%.2fs, has_audio=%s",
             final.duration,
             final.audio is not None
         )
-        
+
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Use system temp directory to avoid issues with Hebrew/Unicode characters in path
-        # FFMPEG on Windows has issues with non-ASCII paths
         temp_dir = tempfile.gettempdir()
         temp_audio_path = Path(temp_dir) / f"mbs_temp_audio_{time.time_ns()}.m4a"
-        temp_video_only = Path(temp_dir) / f"mbs_temp_video_only_{time.time_ns()}.mp4"
-        ffmpeg_fallback_needed = False
-        
+        temp_clean_video = Path(temp_dir) / f"mbs_temp_clean_{time.time_ns()}.mp4"
+
+        subtitle_method = "none"
+        ffmpeg_burn_failed = False
+
         try:
-            # Verify temp audio path directory exists
             temp_audio_path.parent.mkdir(parents=True, exist_ok=True)
-            
             self.logger.info(
-                "Writing video with audio. Temp audio path: %s, Output: %s",
-                temp_audio_path,
-                output_file
+                "Writing clean video (no subtitles) to temp: %s",
+                temp_clean_video,
             )
-            
-            # Write with explicit audio=True and all audio parameters
-            # CRITICAL: audio=True is required to force audio track inclusion
-            # Use high-quality audio settings for clear Hebrew speech
-            try:
-                final.write_videofile(
+            final.write_videofile(
+                str(temp_clean_video),
+                codec="libx264",
+                audio=True,
+                audio_codec="aac",
+                audio_fps=44100,
+                audio_bitrate="256k",
+                audio_bufsize=3000,
+                audio_nbytes=4,
+                fps=30,
+                threads=4,
+                ffmpeg_params=["-pix_fmt", "yuv420p"],
+                logger=None,
+                write_logfile=False,
+                temp_audiofile=str(temp_audio_path),
+            )
+            subtitle_method = "moviepy_clean"
+
+            if captions_path.exists():
+                try:
+                    self._burn_subtitles_ffmpeg(temp_clean_video, captions_path, output_file)
+                    subtitle_method = "ffmpeg_burn"
+                    self.logger.info("Subtitles burned via FFmpeg into: %s", output_file)
+                except Exception as burn_exc:
+                    ffmpeg_burn_failed = True
+                    self.logger.error("FFmpeg subtitle burn failed: %s", burn_exc, exc_info=True)
+            else:
+                temp_clean_video.replace(output_file)
+                subtitle_method = "no_captions"
+
+            # Fallback to MoviePy overlay if FFmpeg burn failed
+            if ffmpeg_burn_failed:
+                self.logger.info("Falling back to MoviePy SubtitlesClip overlay.")
+
+                def _text_factory(txt: str) -> TextClip:
+                    shaped = arabic_reshaper.reshape(txt)
+                    bidi_text = get_display(shaped)
+                    return TextClip(
+                        bidi_text,
+                        fontsize=60,
+                        font="Arial",
+                        color="white",
+                        bg_color="rgba(0,0,0,0.55)",
+                        stroke_color="black",
+                        stroke_width=2,
+                        method="caption",
+                        size=(int(base.w * 0.9), None),
+                        align="center",
+                    )
+
+                def _parse_ts(ts: str) -> float:
+                    hrs, mins, rest = ts.split(":", 2)
+                    secs, millis = rest.split(",", 1)
+                    return int(hrs) * 3600 + int(mins) * 60 + int(secs) + int(millis) / 1000.0
+
+                subtitle_entries = []
+                try:
+                    raw = captions_path.read_text(encoding="utf-8")
+                    for block in raw.strip().split("\n\n"):
+                        lines = block.strip().splitlines()
+                        if len(lines) < 3:
+                            continue
+                        ts_line = lines[1]
+                        if "-->" not in ts_line:
+                            continue
+                        start_str, end_str = [part.strip() for part in ts_line.split("-->", 1)]
+                        text = " ".join(lines[2:]).strip()
+                        subtitle_entries.append((( _parse_ts(start_str), _parse_ts(end_str) ), text))
+                except Exception as parse_exc:
+                    self.logger.error("Failed to parse captions for MoviePy fallback: %s", parse_exc)
+                    subtitle_entries = []
+
+                subs = SubtitlesClip(subtitle_entries, _text_factory).set_position(
+                    ("center", "bottom")
+                )
+                subs = subs.set_duration(audio_duration)
+                final_video = CompositeVideoClip([base, subs]).set_audio(audio_mix).set_duration(audio_duration)
+                final_video.write_videofile(
                     str(output_file),
                     codec="libx264",
-                    audio=True,  # CRITICAL: Explicitly enable audio
+                    audio=True,
                     audio_codec="aac",
-                    audio_fps=44100,  # Standard audio sample rate (matches stitcher output)
-                    audio_bitrate="256k",  # Higher bitrate for better clarity (especially Hebrew)
-                    audio_bufsize=3000,  # Larger buffer for stability
-                    audio_nbytes=4,  # 32-bit audio for better quality
+                    audio_fps=44100,
+                    audio_bitrate="256k",
+                    audio_bufsize=3000,
+                    audio_nbytes=4,
                     fps=30,
                     threads=4,
                     ffmpeg_params=["-pix_fmt", "yuv420p"],
-                    logger=None,  # Suppress console output to avoid encoding errors with Hebrew
+                    logger=None,
                     write_logfile=False,
                     temp_audiofile=str(temp_audio_path),
                 )
-            except Exception as exc:
-                ffmpeg_fallback_needed = True
-                self.logger.error("MoviePy write_videofile failed, will attempt FFmpeg fallback: %s", exc)
-            
-            # Verify output file has audio by checking file size
-            if not ffmpeg_fallback_needed and output_file.exists():
-                file_size = output_file.stat().st_size
-                min_expected_size = int(audio_duration * 15000)  # ~15KB per second minimum
-                if file_size < min_expected_size:
-                    self.logger.warning(
-                        "Output file may be missing audio. Size: %d bytes, expected at least: %d bytes",
-                        file_size, min_expected_size
-                    )
-                    ffmpeg_fallback_needed = True
-                else:
-                    try:
-                        with VideoFileClip(str(output_file)) as probe_clip:
-                            if probe_clip.audio is None:
-                                self.logger.warning("Probe detected missing audio track; triggering FFmpeg fallback.")
-                                ffmpeg_fallback_needed = True
-                    except Exception as probe_exc:
-                        self.logger.warning("Probe failed, will attempt FFmpeg fallback: %s", probe_exc)
-                        ffmpeg_fallback_needed = True
-                    if not ffmpeg_fallback_needed:
-                        self.logger.info(
-                            "Video file created successfully. Size: %d bytes (%.2f MB), expected audio duration: %.2fs",
-                            file_size, file_size / (1024 * 1024), audio_duration
-                        )
-            elif not output_file.exists():
-                self.logger.error("CRITICAL: Output file was not created: %s", output_file)
-                ffmpeg_fallback_needed = True
-
-            if ffmpeg_fallback_needed:
-                self.logger.info("Starting FFmpeg audio mux fallback...")
-                # Export video-only stream
-                try:
-                    base.without_audio().write_videofile(
-                        str(temp_video_only),
-                        codec="libx264",
-                        audio=False,
-                        fps=30,
-                        threads=4,
-                        ffmpeg_params=["-pix_fmt", "yuv420p"],
-                        logger=None,
-                        write_logfile=False,
-                    )
-                except Exception as vo_exc:
-                    self.logger.error("Failed to export video-only stream for FFmpeg fallback: %s", vo_exc)
-                    raise
-
-                ffmpeg_cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    str(temp_video_only),
-                    "-i",
-                    str(audio_file),
-                    "-c:v",
-                    "copy",
-                    "-c:a",
-                    "aac",
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "1:a:0",
-                    str(output_file),
-                ]
-                result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
-                if result.returncode != 0 or not output_file.exists():
-                    self.logger.error(
-                        "FFmpeg fallback failed (code %s): %s %s",
-                        result.returncode,
-                        result.stdout,
-                        result.stderr,
-                    )
-                    raise RuntimeError("FFmpeg fallback failed to mux audio into video.")
-                self.logger.info("FFmpeg fallback succeeded: %s", output_file)
+                subtitle_method = "moviepy_overlay"
         finally:
             audio_mix.close()
             audio.close()
@@ -712,20 +699,53 @@ class VideoComposer:
             base.close()
             for clip in clip_list:
                 clip.close()
-            # Clean up temp audio file
             if temp_audio_path.exists():
                 try:
                     temp_audio_path.unlink()
                 except OSError:
-                    pass  # Ignore cleanup errors
-            if temp_video_only.exists():
+                    pass
+            if temp_clean_video.exists():
                 try:
-                    temp_video_only.unlink()
+                    temp_clean_video.unlink()
                 except OSError:
                     pass
-        
-        self.logger.info("Video exported successfully: %s", output_file)
+
+        self.logger.info("Video exported successfully (%s): %s", subtitle_method, output_file)
         return output_file
+
+    def _burn_subtitles_ffmpeg(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
+        """
+        Burn subtitles into a video using FFmpeg with a Hebrew-friendly style box.
+        """
+        srt_path_resolved = srt_path.resolve()
+        srt_for_ffmpeg = srt_path_resolved.as_posix().replace("\\", "/").replace(":", r"\:")
+        filter_style = (
+            "subtitles='{srt}':force_style="
+            "'FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+            "BackColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=20'"
+        ).format(srt=srt_for_ffmpeg)
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            filter_style,
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 or not output_path.exists():
+            raise RuntimeError(
+                f"FFmpeg subtitle burn failed (code {result.returncode}): {result.stderr or result.stdout}"
+            )
 
     def _write_srt(self, dialogue_json: Dict, total_duration: float, output_path: Path) -> None:
         """
