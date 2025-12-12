@@ -155,7 +155,9 @@ class VideoComposer:
                 self.logger.warning("Image too small (%.1fKB): %s", file_size_kb, image_path.name)
                 return False
 
-            img = cv2.imread(str(image_path))
+            # Use numpy.fromfile + cv2.imdecode to handle Unicode paths on Windows
+            stream = np.fromfile(str(image_path), dtype=np.uint8)
+            img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
             if img is None:
                 self.logger.warning("Failed to read image: %s", image_path.name)
                 return False

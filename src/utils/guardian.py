@@ -10,6 +10,8 @@ from .logging import get_logger
 from .quality_checker import QualityReport
 from . import RunPaths, Settings
 
+import numpy as np
+
 try:  # pragma: no cover - optional dependency
     import cv2  # type: ignore
 except Exception:  # pragma: no cover - headless fallback
@@ -108,7 +110,9 @@ class ProductionGuardian:
                     valid.append(image_path)
                     continue
 
-                img = cv2.imread(str(image_path))
+                # Use numpy.fromfile + cv2.imdecode to handle Unicode paths on Windows
+                stream = np.fromfile(str(image_path), dtype=np.uint8)
+                img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
                 if img is None:
                     self.logger.warning("Discarding unreadable image: %s", image_path.name)
                     image_path.unlink(missing_ok=True)
