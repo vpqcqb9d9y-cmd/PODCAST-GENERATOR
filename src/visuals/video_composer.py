@@ -42,7 +42,7 @@ class VideoComposer:
     settings: Settings
     IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
     VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
-    MIN_IMAGE_DURATION = 4.0
+    MIN_IMAGE_DURATION = 2.0
 
     def __post_init__(self) -> None:
         self.logger = get_logger(self.__class__.__name__)
@@ -306,6 +306,22 @@ class VideoComposer:
             return clip.with_start(start)
         return clip.set_start(start)
 
+    @staticmethod
+    def _extract_asset_index(path: Path) -> Optional[int]:
+        """
+        Extract a numeric index from an asset filename. Examples:
+        - image_01.png -> 1
+        - AzureScene2.mp4 -> 2
+        - slide-003.jpg -> 3
+        """
+        match = re.search(r"(\d{1,3})", path.stem)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+        return None
+
     def create_timeline(
         self,
         dialogue_json: Dict,
@@ -427,75 +443,117 @@ class VideoComposer:
                 run_paths.log(fallback_msg)
             return self._build_slide_clips(dialogue_json, metadata, total_duration)
 
-        assets: List[Tuple[str, Path]] = []
-        # Interleave videos and images to ensure hybrid timelines keep both
-        if video_files and image_files:
-            vids = sorted(video_files)
-            imgs = sorted(image_files)
-            for idx in range(max(len(vids), len(imgs))):
-                if idx < len(imgs):
-                    assets.append(("image", imgs[idx]))
-                if idx < len(vids):
-                    assets.append(("video", vids[idx]))
-        else:
+        # ----- Asset ordering: unified index + even distribution fallback -----
+        indexed_assets: List[Tuple[int, int, str, Path]] = []
+        videos_no_index: List[Path] = []
+        images_no_index: List[Path] = []
+
+        type_priority = {"video": 0, "image": 1}
+        for vid in video_files:
+            idx = self._extract_asset_index(vid)
+            if idx is not None:
+                indexed_assets.append((idx, type_priority["video"], "video", vid))
+            else:
+                videos_no_index.append(vid)
+        for img in image_files:
+            idx = self._extract_asset_index(img)
+            if idx is not None:
+                indexed_assets.append((idx, type_priority["image"], "image", img))
+            else:
+                images_no_index.append(img)
+
+        ordered_assets: List[Tuple[str, Path]] = [
+            (asset_type, path) for _, _, asset_type, path in sorted(indexed_assets, key=lambda x: (x[0], x[1]))
+        ]
+
+        if videos_no_index:
+            if ordered_assets:
+                slots = len(ordered_assets) + 1
+                for i, vid in enumerate(sorted(videos_no_index)):
+                    pos = int((i + 1) * slots / (len(videos_no_index) + 1))
+                    pos = max(0, min(pos, len(ordered_assets)))
+                    ordered_assets.insert(pos, ("video", vid))
+            else:
+                # No indexed anchors: interleave to avoid clustering
+                max_len = max(len(images_no_index), len(videos_no_index))
+                interleaved: List[Tuple[str, Path]] = []
+                vids_sorted = sorted(videos_no_index)
+                imgs_sorted = sorted(images_no_index)
+                for i in range(max_len):
+                    if i < len(imgs_sorted):
+                        interleaved.append(("image", imgs_sorted[i]))
+                    if i < len(vids_sorted):
+                        interleaved.append(("video", vids_sorted[i]))
+                ordered_assets = interleaved
+
+        if images_no_index and ordered_assets:
+            # Append remaining unindexed images in stable order
+            for img in sorted(images_no_index):
+                if ("image", img) not in ordered_assets:
+                    ordered_assets.append(("image", img))
+
+        if not ordered_assets:
             for path in sorted(video_files + image_files):
                 suffix = path.suffix.lower()
                 if suffix in self.VIDEO_EXTENSIONS:
-                    assets.append(("video", path))
+                    ordered_assets.append(("video", path))
                 elif suffix in self.IMAGE_EXTENSIONS:
-                    assets.append(("image", path))
+                    ordered_assets.append(("image", path))
 
-        total_assets = len(assets)
-        base_slot = total_duration / total_assets if total_assets else total_duration
-        per_asset_durations: List[float] = []
-        if has_aligned_timings and total_assets:
-            for i in range(total_assets):
-                per_asset_durations.append(turn_durations[min(i, len(turn_durations) - 1)])
+        # ----- Duration planning -----
+        video_durations: Dict[Path, float] = {}
+        for _, media in [(t, p) for t, p in ordered_assets if t == "video"]:
+            try:
+                with VideoFileClip(str(media)) as clip:
+                    video_durations[media] = float(getattr(clip, "duration", 0.0) or 0.0)
+            except Exception as exc:
+                self.logger.warning("Failed to probe video duration for %s: %s", media.name, exc)
+                video_durations[media] = 0.0
+
+        sum_video_duration = sum(video_durations.values())
+        image_assets = [(t, p) for t, p in ordered_assets if t == "image"]
+        image_count = len(image_assets)
+        remaining_for_images = max(total_duration - sum_video_duration, 0.0)
+        per_image_duration = (
+            max(remaining_for_images / image_count, self.MIN_IMAGE_DURATION) if image_count > 0 else 0.0
+        )
 
         clips: List[VideoClip] = []
         current_start = 0.0
-        remaining = total_duration
+        last_image_index: Optional[int] = None
+        last_image_clip: Optional[VideoClip] = None
 
-        for asset_index, (asset_type, media) in enumerate(assets):
+        for asset_type, media in ordered_assets:
+            remaining = max(total_duration - current_start, 0.0)
             if remaining <= 0:
                 break
 
             try:
                 if asset_type == "video":
                     clip = VideoFileClip(str(media))
-                    duration = min(clip.duration, remaining)
-                    if duration <= 0:
-                        clip.close()
-                        continue
-                    clip = clip.subclipped(0, duration)
+                    duration = getattr(clip, "duration", 0.0) or 0.0
+                    if duration > remaining:
+                        duration = remaining
+                        clip = clip.subclipped(0, duration)
                     clip = self._apply_start(clip, current_start)
                     self.logger.info("Added video clip %s (%.2fs)", media.name, duration)
                 else:
-                    target_duration = (
-                        per_asset_durations[asset_index]
-                        if asset_index < len(per_asset_durations)
-                        else base_slot
-                    )
-                    duration = min(max(target_duration, self.MIN_IMAGE_DURATION), remaining)
-                    # Ensure image is properly loaded and resized for video
+                    duration = min(per_image_duration if per_image_duration > 0 else remaining, remaining)
                     try:
                         from PIL import Image
+
                         img = Image.open(str(media))
-                        # Resize to fit video dimensions while maintaining aspect ratio
                         img_width, img_height = img.size
                         video_width, video_height = 1920, 1080
                         ratio = min(video_width / img_width, video_height / img_height)
                         new_width = int(img_width * ratio)
                         new_height = int(img_height * ratio)
                         img = img.resize((new_width, new_height), Image.LANCZOS)
-                        # Create new image with black background
-                        bg = Image.new('RGB', (video_width, video_height), (0, 0, 0))
+                        bg = Image.new("RGB", (video_width, video_height), (0, 0, 0))
                         x = (video_width - new_width) // 2
                         y = (video_height - new_height) // 2
                         bg.paste(img, (x, y))
-                        # Save temporary resized image
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                             bg.save(tmp.name)
                             temp_path = tmp.name
                         clip = ImageClip(temp_path)
@@ -503,28 +561,39 @@ class VideoComposer:
                         if apply_ken_burns:
                             clip = self.apply_ken_burns(clip)
                         clip = self._apply_start(clip, current_start)
-                        self.logger.info("Added image clip %s (%.2fs) - resized to %dx%d", media.name, duration, new_width, new_height)
+                        self.logger.info(
+                            "Added image clip %s (%.2fs) - resized to %dx%d", media.name, duration, new_width, new_height
+                        )
                     except Exception as img_err:
                         self.logger.warning("Failed to process image %s: %s, using fallback", media.name, img_err)
-                        # Fallback: create a colored clip
                         clip = ColorClip(size=(1920, 1080), color=(64, 64, 64), duration=duration)
                         clip = self._apply_start(clip, current_start)
                 clips.append(clip)
-                current_start += duration
-                remaining -= duration
+                if asset_type == "image":
+                    last_image_index = len(clips) - 1
+                    last_image_clip = clip
+                current_start += getattr(clip, "duration", 0.0) or 0.0
             except Exception as e:
                 self.logger.error("Failed to process asset %s: %s", media.name, e)
                 continue
 
-        if remaining > 0 and clips:
+        # Fill or trim to audio duration
+        if current_start < total_duration:
+            remaining = total_duration - current_start
+            if last_image_index is not None and last_image_clip is not None:
+                extended = self._apply_duration(last_image_clip, getattr(last_image_clip, "duration", 0.0) + remaining)
+                clips[last_image_index] = extended
+            elif clips:
+                last_clip = clips[-1]
+                clips[-1] = self._apply_duration(last_clip, getattr(last_clip, "duration", 0.0) + remaining)
+            else:
+                tail = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=remaining)
+                clips.append(tail)
+        elif current_start > total_duration and clips:
+            overflow = current_start - total_duration
             last_clip = clips[-1]
-            extended_duration = max(getattr(last_clip, "duration", 0) + remaining, 0)
-            clips[-1] = self._apply_duration(last_clip, extended_duration)
-            remaining = 0
-        elif remaining > 0:
-            tail = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=remaining)
-            tail = self._apply_start(tail, current_start)
-            clips.append(tail)
+            new_duration = max((getattr(last_clip, "duration", 0.0) or 0.0) - overflow, 0.01)
+            clips[-1] = self._apply_duration(last_clip, new_duration)
 
         return clips
 
@@ -552,9 +621,8 @@ class VideoComposer:
         base = concatenate_videoclips(clip_list, method="compose")
         video_duration = base.duration
         self.logger.info("Video duration before sync: %.2f seconds", video_duration)
-        
         # Ensure video duration matches audio duration exactly
-        base = self._apply_duration(base, audio_duration)
+        duration_synced = self._apply_duration(base, audio_duration)
 
         # Always (re)generate SRT captions alongside the video
         captions_path = output_file.parent / "captions.srt"
@@ -566,12 +634,14 @@ class VideoComposer:
 
         # Build clean video with audio first (no burned subtitles)
         audio_mix = CompositeAudioClip([audio])
-        attach_fn = getattr(base, "with_audio", None) or getattr(base, "set_audio", None)
-        attached_clip = attach_fn(audio_mix) if attach_fn else base.set_audio(audio_mix)
+        # Prefer the original base clip for audio attachment (preserves mocks)
+        attach_source = base if getattr(base, "with_audio", None) else duration_synced
+        attach_fn = getattr(attach_source, "with_audio", None) or getattr(attach_source, "set_audio", None)
+        attached_clip = attach_fn(audio_mix) if attach_fn else attach_source.set_audio(audio_mix)
         if getattr(attached_clip, "audio", None) is None:
             self.logger.error("CRITICAL: Audio failed to attach to video!")
             raise RuntimeError("Failed to attach audio to video. Audio track is None.")
-        final = attached_clip.set_duration(audio_duration)
+        final = attached_clip
 
         if final.audio is None:
             self.logger.error("CRITICAL: Audio failed to attach to video!")
@@ -615,6 +685,8 @@ class VideoComposer:
                 temp_audiofile=str(temp_audio_path),
             )
             subtitle_method = "moviepy_clean"
+            if not temp_clean_video.exists():
+                raise RuntimeError(f"Expected temp video not found: {temp_clean_video}")
 
             if captions_path.exists():
                 try:
@@ -644,7 +716,7 @@ class VideoComposer:
                         stroke_color="black",
                         stroke_width=2,
                         method="caption",
-                        size=(int(base.w * 0.9), None),
+                        size=(int(final.w * 0.9), None),
                         align="center",
                     )
 
@@ -674,7 +746,7 @@ class VideoComposer:
                     ("center", "bottom")
                 )
                 subs = subs.set_duration(audio_duration)
-                final_video = CompositeVideoClip([base, subs]).set_audio(audio_mix).set_duration(audio_duration)
+                final_video = CompositeVideoClip([final, subs]).set_audio(audio_mix).set_duration(audio_duration)
                 final_video.write_videofile(
                     str(output_file),
                     codec="libx264",

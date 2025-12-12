@@ -62,7 +62,7 @@ class ProductionGuardian:
 
         video_candidates = list(visuals_dir.glob("*.mp4")) + list(visuals_dir.glob("*.mov")) + list(visuals_dir.glob("*.webm"))
         video_candidates.extend([p for p in extra_assets if p.suffix.lower() in {".mp4", ".mov", ".webm"}])
-        video_assets: List[Path] = sorted(set(video_candidates))
+        video_assets: List[Path] = self._validate_videos(sorted(set(video_candidates)))
 
         # One retry: attempt regeneration when we have fewer images than requested.
         if len(valid_images) < expected_images:
@@ -132,6 +132,58 @@ class ProductionGuardian:
                 valid.append(image_path)
             except Exception as exc:  # pragma: no cover - defensive
                 self.logger.warning("Error validating %s: %s", image_path.name, exc)
+        return sorted(valid)
+
+    def _validate_videos(self, videos: List[Path]) -> List[Path]:
+        """
+        Filter out unreadable/fully-black videos. Uses three probes (start/mid/end)
+        to avoid rejecting fades that begin with a black frame.
+        """
+        valid: List[Path] = []
+        for video_path in videos:
+            try:
+                if not video_path.exists():
+                    continue
+                if cv2 is None:
+                    valid.append(video_path)
+                    continue
+
+                cap = cv2.VideoCapture(str(video_path))
+                if not cap or not cap.isOpened():
+                    self.logger.warning("Skipping unreadable video: %s", video_path.name)
+                    continue
+
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                sample_indices = [0]
+                if frame_count > 0:
+                    mid_idx = max(frame_count // 2, 0)
+                    last_idx = max(frame_count - 1, 0)
+                    sample_indices = sorted({0, mid_idx, last_idx})
+
+                means: List[float] = []
+                for idx in sample_indices:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, float(idx))
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        continue
+                    means.append(float(cv2.mean(frame)[0]))
+
+                cap.release()
+
+                if not means:
+                    self.logger.warning("Skipping video with no readable frames: %s", video_path.name)
+                    continue
+
+                if all(m < 2.5 for m in means):
+                    self.logger.warning(
+                        "Discarding likely black video: %s (sample means=%s)", video_path.name, [f"{m:.2f}" for m in means]
+                    )
+                    video_path.unlink(missing_ok=True)
+                    continue
+
+                valid.append(video_path)
+            except Exception as exc:  # pragma: no cover - defensive
+                self.logger.warning("Error validating video %s: %s", video_path.name, exc)
         return sorted(valid)
 
     def _attempt_regeneration(

@@ -569,7 +569,8 @@ class LecturePipeline:
 
                 # Merge guardian-vetted assets with raw AI/Manim outputs (dedup)
                 merged_assets: List[Path] = []
-                for asset in list(guardian_result.assets) + base_assets:
+                ordered_sources = list(base_assets) + [a for a in guardian_result.assets if a not in base_assets]
+                for asset in ordered_sources:
                     if not asset:
                         continue
                     try:
