@@ -1,6 +1,19 @@
-# Azure Podcast Generator
+# M.B.S Studio – AI Lecture-to-Podcast Pipeline
 
-Automated pipeline and PyQt6 desktop GUI that convert long-form lectures into concise, studio-grade podcasts and explainer videos. Includes Voice Lab for recording/cloning voices and CLI tools for scripted runs.
+Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
+
+> **Current version: v3.2.1** | **Build date: 2025-12-11**  
+> Hebrew guide: see [`README.he.md`](README.he.md)
+
+---
+
+## Hotfix 3.2.1
+- **Hybrid visuals**: Keep Imagen/AI images together with Manim/VEO clips (no image drops in hybrid mode).
+- **Audio mux reliability**: Force video duration to match audio; FFmpeg mux fallback if MoviePy write fails or yields silent video.
+- **GUI safety**: Global `sys.excepthook` logs crashes to `processing_log.txt` and shows an error dialog instead of silent exits.
+- **API resilience**: Gemini/Imagen failures immediately fall back to placeholder images so the pipeline completes.
+
+---
 
 ## Key Features
 - PyQt6 GUI with Projects, AI Workspace, and Control panels.
@@ -78,7 +91,7 @@ PODCAST GENERATOR/
 
 ### Responsibilities
 - `run_gui.py` / `gui.main`: launch the desktop UI.
--, `scripts/generate_podcast.py`: headless pipeline entry.
+- `scripts/generate_podcast.py`: headless pipeline entry.
 - `scripts/create_visual_metadata.py`: build/verify visual metadata.
 - `src/gui/controllers/`: encapsulated GUI logic (system metrics, Voice Lab).
 - `src/gui/workers.py`: QThread/QObject workers for pipeline/chat/recording.
@@ -94,12 +107,45 @@ PODCAST GENERATOR/
 - Ensure FFmpeg is installed and on PATH for video/audio steps.
 - Voice Lab cloning requires `ELEVENLABS_API_KEY`; otherwise the clone button stays disabled.
 - Azure and Google keys enable their respective AI providers; the app degrades gracefully if keys are missing.
-תיעוד ועדכון גרסה: README (אנגלית/עברית) והאפליקציה עודכנו ל־v3.1.1 כדי להדגיש את הגיבוי החדש ואת חוויית הוויז׳ואלס המשופרת.
-Recent Updates (v3.1.0)
-Visual Metadata Wizard: הפעלה בפקודה אחת (python -m scripts.create_visual_metadata ...) מייצרת visual_metadata.json עשיר מתוך story/metadata, כולל פריימים קולנועיים ובלוק וידאו.
-Better Quality Checks: הקומפוזר וה-Quality Checker משתמשים ב-OpenCV כדי לתפוס תמונות פגומות מראש ולנתח פריימים ירוקים/שחורים.
-אשף מהיר להתחלה: סעיף חדש ב-README (בעברית) שמסביר איך להפיק ויז׳ואלס מותאמים לפני הפייפליין – בלי צורך בעדכוני LLM ידניים.
-Recent Updates (v3.0.0)
+
+---
+
+## Version History
+
+### Recent Updates (v3.3.0)
+- Live Chat banner padding adjusted for better vertical spacing.
+- Network-dependent actions now block when offline and flash the bottom status banner in red.
+- Voice Lab adds a live mic visualizer while recording.
+- Chat sessions include the active transcript snippet/path for better context in metadata building.
+- Azure TTS dropdown now fetches available Neural voices (key/region required) and respects your selection.
+- Transcription picker is restricted to text files (MP4 uploads disabled to avoid crashes).
+
+### Recent Updates (v3.2.1) - Hotfix Release
+- **Hybrid visuals**: Fixed image inclusion in hybrid mode - both AI images and Manim animations are now merged correctly.
+- **Audio sync**: Enforced video duration matching audio duration; FFmpeg fallback ensures audio is always attached.
+- **GUI stability**: Global exception handler prevents silent crashes - all errors are logged and displayed.
+- **API resilience**: Google AI failures (quota/network) now generate placeholders automatically, allowing pipeline to complete.
+
+### Recent Updates (v3.2.0)
+- ProductionGuardian safeguards: validates assets, removes black frames, adaptive timelines without placeholders, Ken Burns pan/zoom, and audio normalization before video render.
+- Voice Lab recording runs on a background thread with Stop / Play Preview / Delete controls to keep the UI responsive.
+- Smart Preview caps dialogue to 3 turns, forces auto video duration, and limits preview images to 3 while preferring real frames over placeholders to avoid purple screens.
+- Imagen selection is pinned to imagen-4.0-generate-001 (fast/3.x values auto-upgrade) to prevent provider 404 errors.
+
+### Recent Updates (v3.1.3)
+- GUI Visual Metadata Reliability: Added live spinner and local fallback conversion, so even if Gemini/Azure are unavailable, the "🎨 צור מטא-דאטה ויזואלית" button returns within 1-2 minutes with 10 frames + video block.
+- Always-On System Indicators: CPU/NET/🔋 metrics return to the bottom status bar for small screens, without sacrificing the compact status badge in the header.
+
+### Recent Updates (v3.1.1)
+- Auto Visual Metadata Fallbacks: If visual_metadata.json doesn't exist (or is empty), the pipeline builds it automatically from story and metadata – no more runs that produce only blue placeholders.
+- Quality report stability: Quality checks no longer falsely warn about "No images defined", because the backup file includes 8-12 full frames + video block.
+
+### Recent Updates (v3.1.0)
+- Visual Metadata Wizard: One-command execution (`python -m scripts.create_visual_metadata ...`) generates rich visual_metadata.json from story/metadata, including cinematic frames and video block.
+- Better Quality Checks: Composer and Quality Checker use OpenCV to catch damaged images early and analyze green/black frames.
+- Quick Start Guide: New section in README (Hebrew) explaining how to generate custom visuals before the pipeline – no manual LLM updates needed.
+
+### Recent Updates (v3.0.0)
 Universal Content Processing System: 🧠 Revolutionary AI that automatically classifies ANY educational content (technical, business, medical, creative, etc.) and adapts all processing accordingly.
 Dynamic Visual Metadata Generation: 🎨 Automatic generation of optimized visual prompts, styles, colors, and moods based on content type - no manual configuration needed.
 Adaptive ETA & Processing: ⚡ Smart weight calculation that optimizes processing time and resources based on content complexity and requirements.
