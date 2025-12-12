@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -120,7 +121,26 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
             except subprocess.CalledProcessError as exc:
                 self.logger.error("Manim failed for %s: %s", scene_file.name, exc)
                 continue
+
+            # Manim writes into media/videos/<scene>/<quality>/<file>.mp4; move it next to scenes
             scene_output = scenes_directory / output_name
+            if not scene_output.exists():
+                media_root = scenes_directory / "media" / "videos"
+                candidates = list(media_root.rglob(output_name)) if media_root.exists() else []
+                if candidates:
+                    source = max(candidates, key=lambda p: p.stat().st_mtime)
+                    try:
+                        scene_output.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(source), scene_output)
+                        self.logger.info("Moved Manim output from %s to %s", source, scene_output)
+                    except Exception as move_exc:
+                        self.logger.error("Failed to move Manim output %s -> %s: %s", source, scene_output, move_exc)
+                        continue
+                else:
+                    self.logger.warning(
+                        "Manim output not found for %s (looked in %s)", output_name, media_root
+                    )
+                    continue
             try:
                 self.validate_scene_output(scene_output)
                 outputs.append(scene_output)

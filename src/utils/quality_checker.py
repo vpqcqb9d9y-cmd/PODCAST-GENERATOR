@@ -132,7 +132,7 @@ class QualityChecker:
     # Minimum file size thresholds
     MIN_AUDIO_SEGMENT_SIZE_KB = 5
     MIN_FINAL_AUDIO_SIZE_KB = 50
-    MIN_VIDEO_SIZE_KB = 500
+    MIN_VIDEO_SIZE_KB = 250  # default; preview uses dynamic threshold
     
     # Expected video specs
     EXPECTED_VIDEO_WIDTH = 1920
@@ -881,13 +881,13 @@ class QualityChecker:
             )
         
         size_kb = video_path.stat().st_size / 1024
-        
-        if size_kb < self.MIN_VIDEO_SIZE_KB:
+        threshold_kb = 200 if self.report.run_type.upper() == "PREVIEW" else 1000
+        if size_kb < threshold_kb:
             return CheckResult(
                 name="final_video",
                 status="FAIL",
-                message=f"Video file too small: {round(size_kb, 1)} KB",
-                details={"path": str(video_path), "size_kb": round(size_kb, 1)},
+                message=f"Video file too small for {self.report.run_type}: {round(size_kb, 1)} KB (min {threshold_kb} KB)",
+                details={"path": str(video_path), "size_kb": round(size_kb, 1), "threshold_kb": threshold_kb},
             )
         
         # Try to get video details using moviepy
