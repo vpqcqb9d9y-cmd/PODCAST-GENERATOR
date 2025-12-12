@@ -1,105 +1,151 @@
 ![Logo](LOGO.JPEG)
 
-# Azure Podcast Generator
+# M.B.S Studio – מדריך הפעלה בעברית
 
-צינור אוטומטי ו-GUI שולחני ב-PyQt6 שממירים הרצאות ארוכות לפודקאסטים ולסרטוני הסבר קצרים ברמת סטודיו. כולל Voice Lab להקלטה/שכפול קולות וכלי CLI להרצות מתוזמנות.
+מערכת AI שמתרגמת הרצאות ארוכות לפודקאסטים קצרים, מצגות ויזואליות וחוויה בסגנון NotebookLM – הכל בעברית ובממשק אחד.
 
-## Key Features
-- ממשק PyQt6 עם פאנלי Projects, AI Workspace ו-Control.
-- Voice Lab: הקלטה, תצוגה מקדימה ושכפול קולות דרך ElevenLabs.
-- באנר ניטור מערכת (CPU/MEM/battery/network) עם תג חי.
-- Pipeline קצה-לקצה: chunking, יצירת דיאלוג, TTS, stitching, ויז׳ואלס, יצוא PPT/Story.
-- Cost center, Log center, דפדפן היסטוריה, גיבוי/שחזור.
-- סקריפטי CLI להרצות pipeline ללא GUI ולבניית visual metadata.
+**גרסה: 3.2.1** | **עדכון אחרון: דצמבר 2025**  
+[English README](README.md) · [Issues & תמיכה](https://github.com/<org>/podcast-generator/issues)
+
+---
+
+## תוכן העניינים
+1. [סקירה מהירה](#סקירה-מהירה)
+2. [Hotfix 3.2.1](#hotfix-321)
+3. [תכונות בולטות](#תכונות-בולטות)
+4. [דרישות מוקדמות](#דרישות-מוקדמות)
+5. [התקנה והגדרת סביבה](#התקנה-והגדרת-סביבה)
+6. [הרצה מה-CLI](#הרצה-מה-cli)
+7. [עבודה ב-GUI (M.B.S Studio)](#עבודה-ב-gui-mbs-studio)
+8. [יצירת ויזואליים עם Google AI](#יצירת-ויזואליים-עם-google-ai)
+9. [ניהול עלויות ולוגים](#ניהול-עלויות-ולוגים)
+10. [מבנה הפרויקט](#מבנה-הפרויקט)
+11. [פתרון בעיות נפוצות](#פתרון-בעיות-נפוצות)
+12. [תרומה ורישיון](#תרומה-ורישיון)
+
+---
+
+## סקירה מהירה
+- מקבלים תמלול (SRT/TXT) ומטא-דאטה → יוצרים דיאלוג בין שני מנחים (Roee & Noa).
+- ממירים את הדיאלוג לפודקאסט בעברית, ומציגים גלריה של תוצרים (אודיו, וידאו, PPTX, Story).
+- שולטים בהכול מתוך ה-GUI: היסטוריית ריצות, צ'אט עם מודל AI, העלאת חומרים, ותצוגות נתונים.
 
 ## Hotfix 3.2.1
-- תיקון hybrid: שילוב תקין של תמונות AI (Imagen/VEO) עם אנימציות Manim.
-- אמינות אודיו/וידאו: סנכרון משך אודיו, בדיקת חיבור, ונפילת FFMpeg אוטומטית אם MoviePy נכשל.
-- GUI חסין קריסות: sys.excepthook גלובלי שכותב ל־`processing_log.txt` ומציג הודעת שגיאה.
-- שרידות API: כשלי Gemini/Imagen מייצרים מיד פלייסהולדרים במקום לעצור את הפייפליין.
+- היברידי: שמירת תמונות Imagen/AI יחד עם קליפי Manim/VEO – אין יותר איבוד תמונות.
+- אודיו/וידאו: כופים משך וידאו שווה למשך האודיו; נפילת FFmpeg אוטומטית אם MoviePy נכשל או מוציא וידאו שקט.
+- יציבות GUI: `sys.excepthook` גלובלי כותב ל־`processing_log.txt` ומציג הודעת שגיאה במקום קריסה שקטה.
+- שרידות API: כשלי Gemini/Imagen מייצרים פלייסהולדרים מיידית, כך שהפייפליין ממשיך להסתיים בהצלחה.
 
-## Installation
-1. **Prerequisites**
-   - Python 3.9+
-   - FFmpeg ב-PATH
-   - APIs אופציונליים: Azure OpenAI + Speech, ElevenLabs, Google Generative AI
-2. **Set up**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate   # Windows
-   pip install -e .
-   # Dev: pip install -e .[dev]
-   ```
-3. **Configure secrets** (משתני סביבה או ‎.env)
-   - `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`
-   - `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
-   - אופציונלי: `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`
+---
 
-## Usage
-- **Launch GUI**
-  ```bash
-  python run_gui.py
-  ```
-  או `launch_gui.bat` / `launch_gui.ps1`.
+## תכונות בולטות
+- Pipeline אוטומטי בשלושה שלבים (דיאלוג → TTS → וידאו/מצגת) עם שליטה בדגלים.
+- NotebookLM-style metadata: העשרת מטא-דאטה וסטורי ב-Gemini/Azure.
+- Production Guardian: בודק ויזואליים, מסיר פריימים שחורים, Ken Burns לתמונות, טיימליין אדפטיבי, נירמול אודיו.
+- Voice Lab: הקלטה/עצירה/תצוגה מראש/מחיקה ברקע כדי לשמור על UI מהיר; שיכפול ElevenLabs.
+- תמיכה מלאה בעברית: RTL בצ'אט, Story עברי, פקדים בעברית.
+- Cost Center + לוגים: `processing_log.txt` ו-`history.json` בכל ריצה.
 
-- **Run pipeline via CLI**
-  ```bash
-  python -m scripts.generate_podcast --help
-  ```
+### חדש בגרסאות קודמות (תקציר)
+- 3.2.0: Production Guardian, Voice Lab ברקע.
+- 3.1.3/3.1.1: אשף ויזואלי אמין, visual_metadata אוטומטי לגיבוי, חיווי מערכת.
+- 2.6.1: מצבי ויזואליים (Manim/Imagen/VEO/Hybrid), AI-helper לתמונות, מחשבון עלויות.
+- 2.4.0: Google AI Visuals (Imagen 4 + VEO), Heartbeat, תיקון וידאו+אודיו.
 
-- **Tests**
-  ```bash
-  pip install -e .[dev]
-  pytest
-  ```
+---
 
-## Project Structure
+## דרישות מוקדמות
+1. Python 3.9+
+2. FFmpeg ב-PATH (`ffmpeg -version`)
+3. Azure OpenAI (GPT-4o/4-turbo) + Azure Speech Services
+4. אופציונלי: מפתח Gemini (לויזואליים/מטא-דאטה) ו-ElevenLabs (קולות פרימיום)
+
+## התקנה והגדרת סביבה
+```bash
+git clone https://github.com/<org>/podcast-generator.git
+cd podcast-generator
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+pip install -e .[dev]
+cp .env.example .env
 ```
-PODCAST GENERATOR/
-├── run_gui.py               # GUI entry point (imports gui.main)
-├── launch_gui.bat / .ps1    # GUI launchers
-├── build_exe.bat            # Packaging helper
-├── config/                  # העדפות UI ופרופילי קול
-├── data/                    # תמלול/מטא-דאטה לדוגמה
-├── outputs/                 # ריצות שנוצרו, היסטוריה, גיבויים
-├── scripts/                 # כלי CLI (generate_podcast, create_visual_metadata, tests)
-├── src/
-│   ├── gui/                 # אפליקציית PyQt6
-│   │   ├── app.py           # PodcastGeneratorWindow + main()
-│   │   ├── controllers/     # SystemMonitorController, VoiceLabController
-│   │   ├── workers.py       # PipelineWorker, ChatWorker, RecordingWorker, וכו׳
-│   │   ├── panels/          # Projects, Workspace, Control/Summary builders
-│   │   ├── dialogs/         # About, Backup, Cost/Log centers, Voice selector
-│   │   ├── widgets.py       # רכיבי גלילה/צ׳אט מותאמים
-│   │   └── constants.py     # שמות תצוגה, שלבים, ערכות נושא
-│   ├── audio/               # TTS ו-stitching
-│   ├── dialogue/            # chunking + יצירת דיאלוג
-│   ├── visuals/             # קומפוזיציית Manim/וידאו ו-Google AI visuals
-│   ├── metadata/            # סשן צ׳אט ובניית מטא-דאטה
-│   ├── pipeline/            # orchestration ל-CLI/runner
-│   └── utils/               # Settings, logging, storage, costs, helpers
-├── tests/                   # חבילת Pytest
-├── pyproject.toml           # מטא-דאטה ותלויות
-├── README.md                # מדריך באנגלית
-└── README.he.md             # מדריך בעברית
+מלאו ב-`.env` את המפתחות ל-Azure OpenAI/Speech, ואופציונלית:
+```env
+GEMINI_API_KEY=...
+IMAGEN_MODEL=imagen-4.0-generate-001
+VEO_MODEL=veo-2.0-generate-001
+ELEVENLABS_API_KEY=...
 ```
 
-### Responsibilities
-- `run_gui.py` / `gui.main`: השקת ממשק שולחני.
-- `scripts/generate_podcast.py`: כניסת pipeline ללא GUI.
-- `scripts/create_visual_metadata.py`: בנייה/אימות של visual metadata.
-- `src/gui/controllers/`: לוגיקת GUI מבודדת (System Monitor, Voice Lab).
-- `src/gui/workers.py`: עובדי QThread/QObject לפייפליין/צ׳אט/הקלטה.
-- `src/gui/panels/`: בוני UI לפרויקטים, אזור עבודה וטאבי שליטה.
-- `src/audio/`: סינתזת TTS ותפירת אודיו.
-- `src/dialogue/`: chunking ויצירת דיאלוג.
-- `src/visuals/`: מטא-דאטה ויזואלית, קומפוזיציית Manim/וידאו, Google AI visuals.
-- `src/utils/`: הגדרות, לוגים, אחסון, חישובי עלות, עזרי מערכת.
-- `config/`: העדפות משתמש ופרופילי קול.
-- `outputs/`: תוצרי ריצות, לוגים, גיבויים והיסטוריה.
+## הרצה מה-CLI
+```bash
+python -m scripts.generate_podcast \
+  data/sample_transcript.txt \
+  data/sample_metadata.json \
+  --include-visuals \
+  --voice-profile classic \
+  --export-ppt
+```
+דגלים שימושיים: `--dry-run`, `--skip-cache`, `--force`, `--material`, `--url`, `--output-dir`.
 
-## Notes & Tips
-- ודאו ש-FFmpeg מותקן וזמין ב-PATH לשלבי וידאו/אודיו.
-- שכפול ב-Voice Lab דורש `ELEVENLABS_API_KEY`; בלעדיו כפתור השכפול יישאר מושבת.
-- מפתחות Azure ו-Google מפעילים את ספקי ה-AI המתאימים; האפליקציה פועלת במצב מופחת אם הם חסרים.
+## עבודה ב-GUI (M.B.S Studio)
+1. הפעלה: `launch_gui.bat` (או `python -m src.gui.app`).
+2. אזורים:
+   - **Projects Hub**: היסטוריה, כרטיסי תוצרים, ציר זמן.
+   - **Workspace**: צ'אט Gemini/Azure, העלאת קבצים/קישורים, Story חי.
+   - **Control Panel**: בחירת תמלול, מצב תוצר, פרופיל קולות, הפעלת Pipeline, סטטוס ריצה.
+3. כפתורי באנר: רענון/עדכונים, גיבוי/שחזור, אודות, מרכז עלויות, הגדרות תצוגה, מרכז לוגים, 🎨 הגדרות ויזואליים.
+4. Voice Lab: העלאה/הקלטה, Clone with ElevenLabs, מציג יתרת תווים.
 
+## יצירת ויזואליים עם Google AI
+| מנוע | תיאור | עלות |
+|------|--------|------|
+| Manim | אנימציות מקומיות | חינם |
+| Imagen 4 | תמונות (מפות רשת/דיאגרמות/רקעים) | $0.02-$0.06 לתמונה |
+| VEO | סרטוני AI קצרים (עד 3) | ~$0.75 לשנייה |
+| Hybrid | שילוב Manim + Imagen/VEO | משתנה |
+
+הגדרות ב-`.env`:
+```env
+VISUAL_GENERATOR=hybrid
+IMAGEN_MODEL=imagen-4.0-generate-001
+VEO_MODEL=veo-2.0-generate-001
+IMAGE_COUNT=5
+```
+אין מפתח נפרד ל-Imagen/VEO – משתמשים ב-`GEMINI_API_KEY` ובפרויקט GCP עם Vertex AI מופעל.
+
+## ניהול עלויות ולוגים
+- מגבלות חודשיות ל-TTS/OpenAI מומלצות.
+- מחשבון עלויות במרכז העלויות (GPT/TTS/וידאו/PPTX).
+- כל ריצה: `processing_log.txt` + `history.json` עם עלות, זמני שלבים ותוצרים.
+
+## מבנה הפרויקט
+```
+src/
+├── gui/           # אפליקציית PyQt6, פאנלים, דיאלוגים, Voice Lab
+├── audio/         # TTS, stitching
+├── dialogue/      # יצירת דיאלוג
+├── visuals/       # Manim + Video composer + Google AI
+├── pipeline/      # runner/orchestration
+├── metadata/      # מטא-דאטה, יצירת visual metadata
+├── outputs/       # PPTX/Story exporters
+└── utils/         # config/logging/storage/costs
+```
+
+## פתרון בעיות נפוצות
+| תקלה | סיבה | פתרון |
+|------|------|--------|
+| 401 / 404 Azure | מפתח/endpoint/שם פריסה שגויים | בדקו את הערכים ב-`.env` (להעתיק מ-Azure Portal) |
+| FFmpeg missing | FFmpeg לא מותקן/ב-PATH | `choco install ffmpeg` או הוספה ידנית ל-PATH |
+| קובץ בעברית לא נקרא | אינו UTF-8 | שמירה מחדש כ-UTF-8 |
+| אודיו לא מסונכרן | סגמנטים חסרים | להריץ עם `--force` |
+| קריסה בהפעלה | `chat_background_path` או מפתח ישן | מחקו `config/ui_prefs.json`; החל מ־v3.1.4 מתעלם אוטומטית |
+| Imagen/VEO נכשלים | מגבלת API/רשת | הפלייסהולדרים נוצרו; בדקו לוגים וסטטוס API |
+
+## תרומה ורישיון
+- PRs יתקבלו בברכה (lint + pytest).
+- רישיון **MIT**. שאלות ובאגים: פתחו issue ב-GitHub.
+
+---
+
+לקהל הישראלי: מסמך זה הוא המדריך המלא בעברית. לעדכון האנגלי ראו [README.md](README.md).
