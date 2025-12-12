@@ -5,16 +5,16 @@
   "chat_banner_brightness": 0.85,
   "chat_bg_theme": "midnight",
   "default_tts_provider": "azure",
-  "right_panel_width": 349,
-  "main_window_geometry": "01d9d0cb0003000000000000fffffffa0000059f0000035400000000000000100000059d00000351000000000200000005a000000000000000170000059f00000354",
-  "main_window_state": "000000ff00000000fd00000000000005a00000032800000004000000040000000800000008fc00000000",
+  "right_panel_width": 355,
+  "main_window_geometry": "01d9d0cb0003000000000000fffffffa000005b1000003540000000000000000fffffffefffffffe000000000200000005a00000000000000017000005b100000354",
+  "main_window_state": "000000ff00000000fd00000000000005b20000032800000004000000040000000800000008fc00000000",
   "main_splitter_sizes": [
     300,
-    1114
+    1132
   ],
   "content_splitter_sizes": [
-    759,
-    349
+    771,
+    355
   ],
   "chat_font_path": "",
   "chat_user_bubble": "#0f766e",
