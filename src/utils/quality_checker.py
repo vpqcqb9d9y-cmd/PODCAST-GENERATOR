@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 from pydub import AudioSegment
 
 from .logging import get_logger
@@ -1167,9 +1168,14 @@ class QualityChecker:
             # Validate each image entry
             missing_prompts = 0
             missing_styles = 0
+            short_prompts = 0
             for i, img in enumerate(images):
                 if not img.get("prompt"):
                     missing_prompts += 1
+                else:
+                    prompt_len = len(str(img.get("prompt", "")).strip())
+                    if prompt_len < 10:
+                        short_prompts += 1
                 if not img.get("style"):
                     missing_styles += 1
 
@@ -1177,6 +1183,8 @@ class QualityChecker:
                 issues.append(f"{missing_prompts} images missing prompts")
             if missing_styles > 0:
                 issues.append(f"{missing_styles} images missing style information")
+            if short_prompts > 0:
+                issues.append(f"{short_prompts} prompt(s) look too short for quality visuals (<10 chars)")
 
             # Check for Hebrew content in prompts
             hebrew_images = 0
@@ -1275,7 +1283,15 @@ class QualityChecker:
                     details["corrupted_images"].append(f"{img_path.name} ({size_kb:.1f}KB)")
 
                 if cv2 is not None:
-                    img = cv2.imread(str(img_path))
+                    try:
+                        stream = np.fromfile(str(img_path), dtype=np.uint8)
+                        img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
+                    except Exception as exc:
+                        details["corrupted_images"].append(
+                            f"{img_path.name} (cv2 read error: {str(exc)[:40]})"
+                        )
+                        continue
+
                     if img is None:
                         details["corrupted_images"].append(f"{img_path.name} (cv2 read failure)")
                         continue
@@ -1312,71 +1328,105 @@ class QualityChecker:
         if size_mb < 1:
             issues.append(f"Video too small: {size_mb:.2f}MB (expected >1MB)")
 
-        cv2 = self._load_cv2()
-        if cv2 is None:
+        cap = None
+        width = height = frame_count = 0
+        fps = 0.0
+        duration = 0.0
+        used_moviepy_fallback = False
+
+        try:
+            cv2 = self._load_cv2()
+        except Exception as exc:
             issues.append("cv2 unavailable for video validation")
-            return issues, details
+            self.logger.warning("cv2 unavailable, will rely on moviepy fallback: %s", exc)
+            cv2 = None
 
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            cap.release()
-            issues.append("Cannot open video file for validation")
-            return issues, details
+        if cv2 is not None:
+            try:
+                cap = cv2.VideoCapture(str(video_path))
+            except Exception as exc:
+                self.logger.warning("cv2.VideoCapture failed, using moviepy fallback: %s", exc)
+                cap = None
 
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = frame_count / fps if fps > 0 else 0
+            if cap is not None and cap.isOpened():
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = cap.get(cv2.CAP_PROP_FPS) or 0
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                duration = frame_count / fps if fps > 0 else 0
 
-        details.update(
-            {
-                "video_width": width,
-                "video_height": height,
-                "video_fps": round(fps, 1) if fps else 0,
-                "video_duration_sec": round(duration, 1),
-                "video_frames": frame_count,
-            }
-        )
+                details.update(
+                    {
+                        "video_width": width,
+                        "video_height": height,
+                        "video_fps": round(fps, 1) if fps else 0,
+                        "video_duration_sec": round(duration, 1),
+                        "video_frames": frame_count,
+                    }
+                )
 
-        if duration < 30:
-            issues.append(f"Video too short: {duration:.1f}s (expected >30s)")
-        if width < self.EXPECTED_VIDEO_WIDTH or height < self.EXPECTED_VIDEO_HEIGHT:
-            issues.append(
-                f"Video resolution low: {width}x{height} (expected {self.EXPECTED_VIDEO_WIDTH}x{self.EXPECTED_VIDEO_HEIGHT})"
-            )
+                if duration < 30:
+                    issues.append(f"Video too short: {duration:.1f}s (expected >30s)")
+                if width < self.EXPECTED_VIDEO_WIDTH or height < self.EXPECTED_VIDEO_HEIGHT:
+                    issues.append(
+                        f"Video resolution low: {width}x{height} (expected {self.EXPECTED_VIDEO_WIDTH}x{self.EXPECTED_VIDEO_HEIGHT})"
+                    )
 
-        sample_stride = max(frame_count // 20, 1) if frame_count else 1
-        blank_frames = 0
-        green_frames = 0
+                sample_stride = max(frame_count // 20, 1) if frame_count else 1
+                blank_frames = 0
+                green_frames = 0
 
-        for idx in range(0, frame_count, sample_stride):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            success, frame = cap.read()
-            if not success:
-                continue
-            mean_val = frame.mean()
-            if mean_val < 10:
-                blank_frames += 1
-            b_channel, g_channel, r_channel = cv2.split(frame)
-            if (
-                g_channel.mean() > 200
-                and r_channel.mean() < 100
-                and b_channel.mean() < 100
-            ):
-                green_frames += 1
+                for idx in range(0, frame_count, sample_stride):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                    success, frame = cap.read()
+                    if not success:
+                        continue
+                    mean_val = frame.mean()
+                    if mean_val < 10:
+                        blank_frames += 1
+                    b_channel, g_channel, r_channel = cv2.split(frame)
+                    if (
+                        g_channel.mean() > 200
+                        and r_channel.mean() < 100
+                        and b_channel.mean() < 100
+                    ):
+                        green_frames += 1
 
-        cap.release()
+                if blank_frames > 2:
+                    issues.append(f"Detected {blank_frames} blank frame(s) in video")
+                if green_frames > 2:
+                    issues.append(f"Detected {green_frames} potential green-screen frame(s)")
+            else:
+                issues.append("cv2 could not open video; using moviepy fallback")
+                used_moviepy_fallback = True
 
-        if blank_frames > 2:
-            issues.append(f"Detected {blank_frames} blank frame(s) in video")
-        if green_frames > 2:
-            issues.append(f"Detected {green_frames} potential green-screen frame(s)")
+            if cap is not None:
+                cap.release()
+        else:
+            used_moviepy_fallback = True
+
+        if used_moviepy_fallback:
+            details.setdefault("fallbacks", []).append("moviepy_video_probe")
 
         try:
             from moviepy.editor import VideoFileClip
 
             clip = VideoFileClip(str(video_path))
+            moviepy_duration = clip.duration or 0
+
+            if used_moviepy_fallback or not width or not height:
+                width, height = clip.w, clip.h
+                fps = clip.fps or fps
+                duration = moviepy_duration
+                details.update(
+                    {
+                        "video_width": width,
+                        "video_height": height,
+                        "video_fps": round(fps, 1) if fps else 0,
+                        "video_duration_sec": round(duration, 1),
+                    }
+                )
+
             if clip.audio is None:
                 issues.append("Video has no audio track")
             else:

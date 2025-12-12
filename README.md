@@ -2,16 +2,16 @@
 
 Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
 
-> **Current version: v3.2.1** | **Build date: 2025-12-11**  
+> **Current version: v3.3.1** | **Build date: 2025-12-12**  
 > Hebrew guide: see [`README.he.md`](README.he.md)
 
 ---
 
-## Hotfix 3.2.1
-- **Hybrid visuals**: Keep Imagen/AI images together with Manim/VEO clips (no image drops in hybrid mode).
-- **Audio mux reliability**: Force video duration to match audio; FFmpeg mux fallback if MoviePy write fails or yields silent video.
-- **GUI safety**: Global `sys.excepthook` logs crashes to `processing_log.txt` and shows an error dialog instead of silent exits.
-- **API resilience**: Gemini/Imagen failures immediately fall back to placeholder images so the pipeline completes.
+## Hotfix 3.3.1
+- **Manim dynamic topics**: Dialogue text now drives LLM-picked scene concepts—works for non-technical/song topics without keyword lists.
+- **Unicode-safe visuals**: OpenCV image loads use `np.fromfile + imdecode`, preventing false corruption on Hebrew/Unicode paths.
+- **Quality robustness**: Video analysis falls back to MoviePy if OpenCV fails; image checks use Unicode-safe reads and flag too-short prompts.
+- **Guardian safety**: Black-frame removal kept, but read errors no longer delete assets on Windows paths.
 
 ---
 
@@ -111,6 +111,12 @@ PODCAST GENERATOR/
 ---
 
 ## Version History
+
+### Recent Updates (v3.3.1)
+- Manim scene selection uses LLM-derived geometric concepts from dialogue (no hardcoded keywords).
+- OpenCV reads are Unicode-safe across Guardian, Composer, and QA, eliminating false corrupt-image flags on Hebrew paths.
+- QA video analysis wraps `VideoCapture` failures with MoviePy fallback and detects short/empty prompts in visual metadata.
+- Guardian preserves assets on read errors while still removing true black frames.
 
 ### Recent Updates (v3.3.0)
 - Live Chat banner padding adjusted for better vertical spacing.

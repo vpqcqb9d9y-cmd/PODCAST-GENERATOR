@@ -111,11 +111,15 @@ class ProductionGuardian:
                     continue
 
                 # Use numpy.fromfile + cv2.imdecode to handle Unicode paths on Windows
-                stream = np.fromfile(str(image_path), dtype=np.uint8)
-                img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
+                try:
+                    stream = np.fromfile(str(image_path), dtype=np.uint8)
+                    img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
+                except Exception as exc:
+                    self.logger.warning("Skipping image read error (%s): %s", image_path.name, exc)
+                    continue
+
                 if img is None:
-                    self.logger.warning("Discarding unreadable image: %s", image_path.name)
-                    image_path.unlink(missing_ok=True)
+                    self.logger.warning("Skipping unreadable image (imdecode failed): %s", image_path.name)
                     continue
 
                 # Detect near-black/corrupt frames

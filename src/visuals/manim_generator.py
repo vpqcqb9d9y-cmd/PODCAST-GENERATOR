@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -13,15 +14,6 @@ from ..utils import RunPaths, Settings, get_logger
 
 
 HEBREW_FONT = "Arial"  # Default Hebrew-compatible font for generated scenes
-
-KEYWORD_TO_SCENE = {
-    "virtual network": "תרשים של משאבים בתוך VNet עם תתי-רשתות וחיבור ל-VPN.",
-    "load balancer": "אנימציה של בקשות נכנסות המחולקות בין מופעי שרתים שונים.",
-    "vm": "דיאגרמה של VM Scale Set עם הוספה והסרה אוטומטית של מכונות.",
-    "storage": "השוואה בין Azure Blob, File Shares ו-Managed Disks.",
-    "container": "מחשה של Cluster AKS שמריץ פודים ומאזן תעבורה.",
-}
-
 
 @dataclass
 class ManimSceneGenerator:
@@ -39,16 +31,40 @@ class ManimSceneGenerator:
 
     def identify_visual_needs(self, dialogue_json: Dict) -> List[Dict[str, str]]:
         """
-        Scan dialogue for keywords that need visualization.
-        Returns a list of scene descriptors.
+        Use LLM to propose 1-2 abstract concepts for simple geometric Manim animation.
+        Works for any topic (technical or not).
         """
         dialogues = dialogue_json.get("dialogue", [])
-        full_text = " ".join(item.get("text", "").lower() for item in dialogues)
-        matches: List[Dict[str, str]] = []
-        for keyword, description in KEYWORD_TO_SCENE.items():
-            if keyword in full_text:
-                matches.append({"keyword": keyword, "description": description})
-        return matches
+        full_text = "\n".join(item.get("text", "") for item in dialogues)
+        if not full_text.strip():
+            return []
+
+        prompt = (
+            "Given the following dialogue transcript (may be Hebrew), identify 1-2 abstract"
+            " concepts that can be illustrated with very simple geometric shapes in Manim."
+            " Avoid complex assets, photos, or detailed text rendering. Return ONLY JSON:"
+            " a list of objects, each with a 'description' field in Hebrew describing a"
+            " simple geometric animation idea (circles, lines, arrows, grids, transforms)."
+            " No prose or code fences."
+            f"\n\nTranscript:\n{full_text}"
+        )
+
+        try:
+            response = self._chat_completion(prompt, max_tokens=400)
+            raw_text = response.choices[0].message.content or ""
+            scenes = self._parse_scene_suggestions(raw_text)
+            if scenes:
+                return scenes
+            self.logger.warning("LLM returned no parsable scenes; using generic fallback.")
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.warning("LLM scene discovery failed: %s", exc)
+
+        # Safe fallback: single generic abstract scene
+        return [
+            {
+                "description": "אנימציה גיאומטרית כללית: מעגלים וריבועים שמסבירים קשרים ומעברים בין רעיונות.",
+            }
+        ]
 
     def generate_manim_code(self, scene_description: str, class_name: str) -> str:
         """
@@ -173,6 +189,28 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
             if match:
                 return match.group(1)
         raise ValueError(f"No Scene subclass found in {scene_file.name}")
+
+    def _parse_scene_suggestions(self, raw_text: str) -> List[Dict[str, str]]:
+        """Parse JSON list of scene descriptions from LLM response."""
+        cleaned = self._strip_code_fences(raw_text)
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return []
+
+        if not isinstance(payload, list):
+            return []
+
+        scenes: List[Dict[str, str]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            desc = str(item.get("description", "")).strip()
+            if desc:
+                scenes.append({"description": desc})
+            if len(scenes) >= 2:
+                break
+        return scenes
 
     @retry(
         stop=stop_after_attempt(3),
