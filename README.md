@@ -1,105 +1,181 @@
 # M.B.S Studio – AI Lecture-to-Podcast Pipeline
 
-Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
+Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos inspired by Google NotebookLM.
 
-> Current version: **v3.2.1**  
-> Hebrew guide: see [`README.he.md`](README.he.md)
+Current version: **v3.2.1**  
+Looking for the full Hebrew documentation? Jump to [`README.he.md`](README.he.md) or the “מדריך בעברית” section below.
 
 ---
 
 ## Table of Contents
-- [Quick Start in 3 Steps](#quick-start-in-3-steps)
-- [Hotfix 3.2.1](#hotfix-321)
-- [Overview](#overview)
-- [Key Highlights](#key-highlights)
-- [Architecture at a Glance](#architecture-at-a-glance)
-- [Prerequisites](#prerequisites)
-- [Installation & Setup](#installation--setup)
-- [Quickstart – CLI Pipeline](#quickstart--cli-pipeline)
-- [M.B.S Studio GUI](#mbs-studio-gui)
-- [Google AI Visual Generation](#google-ai-visual-generation)
-- [TTS Providers](#tts-providers)
-- [Costs, Telemetry & Logs](#costs-telemetry--logs)
-- [Troubleshooting](#troubleshooting)
-- [Project Layout](#project-layout)
-- [Contributing & License](#contributing--license)
+- 🚀 Quick Start in 3 Steps
+- 🧙‍♂️ אשף מהיר לויז׳ואלס
+- Overview
+- Key Highlights
+- Architecture at a Glance
+- Prerequisites
+- Installation & Setup
+- Quickstart – CLI Pipeline
+- M.B.S Studio GUI
+- Google AI Visual Generation
+- TTS Providers
+- Costs, Telemetry & Logs
+- Troubleshooting
+- Project Layout
+- Contributing & License
+- מדריך בעברית
 
 ---
 
-## Quick Start in 3 Steps
+## 🚀 Quick Start in 3 Steps
+Get your first podcast in under 5 minutes.
 
-**Get your first podcast in under 5 minutes**
-
-### Step 1: Setup
+**Step 1: Setup**
 ```bash
 git clone https://github.com/<org>/podcast-generator.git
 cd podcast-generator
-python -m venv .venv
-.venv\Scripts\activate   # Windows
 pip install -e .
-cp .env.example .env     # and fill your keys
+
+cp .env.example .env
+# Edit .env with your Azure OpenAI & Speech keys
 ```
 
-### Step 2: Launch the GUI
+**Step 2: Launch the GUI**
 ```bash
-launch_gui.bat     # or: python -m src.gui.app
+# Windows
+launch_gui.bat
+
+# Or directly
+python -m src.gui.app
 ```
 
-### Step 3: Generate Your Podcast
-- Pick transcript + metadata, set output mode, click “Run Pipeline”.
-- Outputs land under `outputs/<date_slug>/` (audio, video, story, PPTX, logs).
+**Step 3: Generate Your Podcast**
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  📁 Projects Hub  │  💬 AI Workspace     │  🎛️ Control Panel       │
+├───────────────────┼──────────────────────┼─────────────────────────┤
+│                   │  1️⃣ Chat with AI     │  4️⃣ Choose transcript    │
+│  Previous runs    │     to build         │     & output settings   │
+│  and history      │     metadata         │                         │
+│                   │                      │  5️⃣ Click "הפעל Pipeline"│
+│                   │  2️⃣ Upload files     │                         │
+│                   │     & URLs           │  6️⃣ Watch progress with │
+│                   │                      │     🚀💬🎤🎬 icons     │
+│                   │  3️⃣ Preview Story    │     and ETA             │
+└───────────────────┴──────────────────────┴─────────────────────────┘
+```
+Your podcast, video, and slides will be saved in `outputs/`.
 
 ---
 
-## Hotfix 3.2.1
-- Hybrid visuals: keep Imagen/AI images together with Manim/VEO clips (no image drops in hybrid mode).
-- Audio mux reliability: force video duration to match audio; FFmpeg mux fallback if MoviePy write fails or yields silent video.
-- GUI safety: global `sys.excepthook` logs crashes to `processing_log.txt` and shows an error dialog instead of silent exits.
-- API resilience: Gemini/Imagen failures immediately fall back to placeholder images so the pipeline completes.
+## 🧙‍♂️ אשף מהיר לויז׳ואלס (חובה לווידאו!)
+⚠️ החל מ-v3.1.3 הפייפליין בונה `visual_metadata.json` אוטומטית גם בלי AI, אך כדי לקבל פריימים קולנועיים עם טקסט עברי RTL מומלץ להפעיל את האשף לפני הווידאו.
+
+**GUI**  
+1. לחץ על “🎨 צור מטא-דאטה ויזואלית” בפאנל הימני.  
+2. חכה לסיום (שניות).  
+3. רק אז לחץ “הפעל Pipeline”.
+
+**CLI**  
+```bash
+python -m scripts.create_visual_metadata ^
+  outputs/2025-11-25_azure-networking-basics/story.json ^
+  --metadata outputs/2025-11-25_azure-networking-basics/metadata.json ^
+  --output   outputs/2025-11-25_azure-networking-basics/visual_metadata.json ^
+  --image-count 10
+```
+
+| שלב | פעולה |
+|-----|-------|
+| 1️⃣ | סורק story.json והמושגים החשובים |
+| 2️⃣ | מייצר 8‑12 פריימים קולנועיים RTL |
+| 3️⃣ | מוסיף בלוק וידאו עם תיאור סצנות |
+| 4️⃣ | מבטיח תיוג “Hebrew overlays / RTL” |
+
+למה חשוב?  
+- ללא `visual_metadata.json`: תמונות גנריות, טקסט באנגלית, פלייסהולדרים.  
+- עם `visual_metadata.json`: תמונות מותאמות, טקסט RTL, איכות גבוהה.  
+טיפ: אם ה-story כולל metadata – אין צורך ב-`--metadata`.
 
 ---
 
 ## Overview
-M.B.S Studio ingests a transcript, enriches metadata with AI, generates dialogue, TTS, stitched audio, and (optionally) visuals/PPTX. It can run via GUI or CLI and stores every run under `outputs/`.
+M.B.S Studio ingests a raw transcript (±30K words), enriches it with AI-driven metadata, and produces:
+- A natural-sounding dialogue between two virtual hosts (Roee & Noa).
+- Studio-quality Hebrew TTS tracks mixed into a finished podcast.
+- Optional visuals (Manim scenes + NotebookLM-like slides) and PPT exports.
 
 ## Key Highlights
-- Multi-stage pipeline (Dialogue → Speech → Audio → Visuals/Slides).
-- NotebookLM-inspired metadata fabric (Azure OpenAI + Gemini).
-- Hybrid visuals: Manim animations plus Google AI Imagen/VEO (with placeholders on failure).
-- Production Guardian: validates visuals, removes black frames, Ken Burns for stills, adaptive timelines, audio normalization.
-- Hebrew-first UX: RTL-aware chat, story preview, galleries, and font handling.
-- Cost tracking and history per run (`processing_log.txt`, `history.json`).
+- Multi-stage pipeline (Dialogue → Speech → Video).
+- NotebookLM-inspired metadata fabric (Azure OpenAI & Gemini).
+- UI state persistence and RTL-first UX.
+- Dual TTS (Azure / ElevenLabs) with voice selector.
+- Visual model selector (Imagen 4), Production Guardian (Ken Burns, black-frame cleanup, adaptive timelines, audio normalization).
+
+### Visual Generation
+- 5 modes: Manim, Imagen, Imagen+Manim ⭐, VEO, Hybrid 💎
+- VEO clips (up to 3) with placeholder fallback.
+- AI helper for metadata; cost calculator.
+
+### Recent Updates
+- v3.3.0: chat banner spacing, offline guard for network actions, mic visualizer, transcript context in chat, Azure TTS dropdown fetches voices, MP4 uploads blocked in picker.
+- v3.2.0: ProductionGuardian safeguards, Voice Lab background thread, Smart Preview limits, Imagen pinned to `imagen-4.0-generate-001`.
+- v3.1.3: Visual wizard spinner + local fallback; system indicators restored.
+- v3.1.1: Auto visual_metadata.json when missing; quality checks no longer warn on “No images defined”.
+- v3.1.0: One-command visual wizard, OpenCV checks, quick-start visual guide.
+- v3.0.0: Universal content classification, dynamic visual metadata, adaptive ETA, improved composer.
+
+---
 
 ## Architecture at a Glance
-| Stage               | Responsibility                                        | Key Modules                       |
-|---------------------|--------------------------------------------------------|-----------------------------------|
-| Dialogue Generation | Chunk transcript, summarize, craft JSON dialogue      | `src/dialogue/chunker.py`, `generator.py` |
-| Speech Synthesis    | Azure TTS or ElevenLabs, dual voices, leveling, mixdown| `src/audio/tts.py`, `elevenlabs_tts.py`, `stitcher.py` |
-| Visuals & Slides    | Manim animations, Google AI images/videos, PPT export  | `src/visuals/*.py`, `src/outputs/deck.py` |
-| Pipeline Runner     | Orchestration, costs, logging, recovery                | `src/pipeline/runner.py`, `src/gui/app.py` |
+| Stage | Responsibility | Key Modules |
+|-------|----------------|-------------|
+| Dialogue Generation | Chunk raw transcript, summarize, craft JSON dialogue | `src/dialogue/chunker.py`, `generator.py` |
+| Speech Synthesis | Azure TTS or ElevenLabs, dual voices, leveling, mixdown | `src/audio/tts.py`, `elevenlabs_tts.py`, `stitcher.py` |
+| Visuals & Slides | Manim animations, Google AI images/videos, slide composer, PPT export | `src/visuals/*.py`, `src/outputs/deck.py` |
+| Pipeline Runner | Orchestrates CLI/GUI runs, cost tracking, logging, sleep recovery | `src/pipeline/runner.py`, `src/gui/app.py` |
+
+Data products live under `outputs/<date>_<slug>/` (dialogue, metadata, audio stems, PPTX, story, visuals, logs).
 
 ## Prerequisites
 - Python 3.9+
-- FFmpeg in PATH (e.g., `choco install ffmpeg` on Windows)
-- Azure OpenAI + Speech keys (for dialogue/TTS)
-- Optional: Gemini API key (Imagen/VEO), ElevenLabs API key (premium TTS)
+- FFmpeg in PATH (`choco install ffmpeg` on Windows)
+- Azure OpenAI + Speech
+- Optional: Gemini API key (hybrid visuals), ElevenLabs API key (premium TTS)
+
+## TTS Providers
+**Azure Neural TTS (default)** — ~$0.016/1K chars. Voices: he-IL-AvriNeural, he-IL-HilaNeural.  
+**ElevenLabs** — ~$0.30/1K chars; 30+ voices; model `eleven_multilingual_v2`.  
+Enable ElevenLabs:
+```env
+ELEVENLABS_API_KEY=your-api-key
+DEFAULT_TTS_PROVIDER=elevenlabs
+```
+
+## Google AI Visual Generation
+- Imagen 4: network maps, diagrams, slide backgrounds. Models: `imagen-4.0-generate-001` (fast/ultra variants).
+- VEO: short animated scenes (~$0.75/s), with placeholder fallback.
+- Modes: `manim`, `imagen`, `imagen_manim`, `veo`, `hybrid` (full combo).
+- Visual metadata: supply `visual_metadata.json` for best quality (Hebrew RTL prompts). Auto-generated when missing; wizard recommended.
 
 ## Installation & Setup
 ```bash
-pip install -e .[dev]   # or: pip install -e .
+pip install -e .[dev]
 ```
-Fill `.env` with:
+`.env` essentials:
 ```env
 AZURE_OPENAI_ENDPOINT=...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_DEPLOYMENT=...
 AZURE_SPEECH_KEY=...
 AZURE_SPEECH_REGION=...
-# Optional
+
+# Visuals (Vertex AI)
 GEMINI_API_KEY=...
 IMAGEN_MODEL=imagen-4.0-generate-001
 VEO_MODEL=veo-2.0-generate-001
-ELEVENLABS_API_KEY=...
+VISUAL_GENERATOR=hybrid
+IMAGE_COUNT=5
 ```
 
 ## Quickstart – CLI Pipeline
@@ -111,63 +187,84 @@ python -m scripts.generate_podcast \
   --voice-profile classic \
   --export-ppt
 ```
-Useful flags: `--dry-run`, `--skip-cache`, `--force`, `--output-dir`.
+Flags: `--dry-run`, `--skip-cache`, `--force`, `--output-dir`, `--material`, `--url`.
 
 ## M.B.S Studio GUI
-- Launch: `launch_gui.bat` (keeps window open on errors).
-- Panes: Projects Hub (history/actions), Workspace (chat, uploads, metadata, story preview), Control & Insights (run controls, gallery, status banner).
-- Voice Lab: record/preview/clone with ElevenLabs; shows remaining quota.
-- Onboarding, Cost Center, Log Center, Backup/Restore dialogs included.
+- Launch via `launch_gui.bat` (keeps window open on errors).
+- Panes: Projects Hub (history/timeline/explorer), Workspace (AI chat, uploads, metadata, story), Control & Insights (transcript/output mode/voices/run controls/gallery).
+- Banner buttons: refresh/update check, backup/restore, about, Cost Center, Appearance, Log Center, 🎨 Visual settings.
+- Voice Lab: record/stop/preview/reset; clone with ElevenLabs; shows remaining characters.
 
-## Google AI Visual Generation
-- Imagen 4 (images): network maps, diagrams, slide backgrounds. Models: `imagen-4.0-generate-001` (default/fast variants supported).
-- VEO (video): up to 3 short clips; falls back to animated placeholders if API unavailable.
-- Modes: `manim`, `imagen`, `imagen_manim`, `veo`, `hybrid` (recommended for full combo).
-- Placeholders: when Gemini/Imagen/VEO fail, placeholders are generated to keep the run alive.
+### Progress Tracking
+Stages with icons/ETA: 🚀 Initialize → 💬 Dialogue → 🎤 TTS → 🎵 Audio → 🎬 Video → ✅ Complete.
 
-## TTS Providers
-- **Azure Neural TTS (default):** he-IL-AvriNeural / he-IL-HilaNeural; low cost.
-- **ElevenLabs (premium):** richer voices; requires `ELEVENLABS_API_KEY`; model `eleven_multilingual_v2`.
-Switch via CLI `--tts-provider` or UI.
+### Available Dialogs
+Onboarding, Cost Center, Appearance, Log Center, Backup/Restore, About, Voice Selector, Network Map export.
 
 ## Costs, Telemetry & Logs
-- Per-run cost + token summaries in `processing_log.txt` and `history.json`.
-- Budgets for OpenAI/TTS; calculators in the Cost Center dialog.
-- Quality and guardian reports stored in each run directory.
+- Per-run `processing_log.txt` and `history.json` with costs, tokens, stage timings.
+- Cost calculator (GPT/TTS/Video/PPT) in Cost Center.
+- Budgets for OpenAI/TTS recommended.
 
 ## Troubleshooting
-- 401/404 (Azure): verify endpoint/key/deployment names in `.env`.
-- FFmpeg missing: install and add to PATH.
-- Encoding issues: ensure UTF-8 inputs.
-- Audio desync: rerun with `--force`; hotfix 3.2.1 enforces audio/video duration match.
-- Missing visuals: ensure `VISUAL_GENERATOR` not set to `manim` alone; hybrid requires Imagen/VEO keys.
-- Gemini/Imagen quota: falls back to placeholders; check logs for warnings.
+- Hybrid visuals: `VISUAL_GENERATOR=hybrid` merges Imagen + Manim clips automatically.
+- PPTX text-only fallback when visuals missing.
+- FFmpeg missing → install/add to PATH.
+- Encoding → ensure UTF-8.
+- Audio desync → `--force`; Hotfix 3.2.1 enforces duration match.
+- Azure 401/404 → verify endpoint/key/deployment names.
+- Imagen 4 safety: use `imagen-4.0-generate-001`; omit explicit safety params.
+- Gemini/Imagen quota: placeholders will be produced; check logs.
+
+## 🎥 Vertex AI Setup (Imagen 4 & VEO)
+1. Enable Billing + Vertex AI API in Google Cloud.  
+2. In Model Garden, enable Imagen and Veo.  
+3. Auth locally: `gcloud auth application-default login`.  
+4. `.env`:
+```env
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+IMAGEN_MODEL=imagen-4.0-generate-001
+VEO_MODEL=veo-2.0-generate-001
+VISUAL_GENERATOR=hybrid
+IMAGE_COUNT=5
+```
+
+### Visual Generator Modes
+| Mode | Cost | Output |
+|------|------|--------|
+| manim | Free | Local animations |
+| imagen | ~$0.04/img | Static educational images |
+| imagen_manim ⭐ | ~$0.04/img | AI images + Manim |
+| veo | ~$0.75/s | Up to 3 AI clips |
+| hybrid 💎 | Variable | Images + animations + clips |
+
+---
 
 ## Project Layout
 ```
 PODCAST GENERATOR/
-├── run_gui.py
-├── launch_gui.bat / .ps1
-├── config/          # UI prefs, voice profiles
-├── data/            # sample inputs
-├── outputs/         # generated runs
-├── scripts/         # CLI entry points
 ├── src/
-│   ├── gui/         # PyQt6 app
-│   ├── audio/       # TTS + stitching
-│   ├── dialogue/    # transcript chunking + dialogue generation
-│   ├── visuals/     # Manim + video composer + Google AI visuals
-│   ├── pipeline/    # runner/orchestration
-│   └── utils/       # settings, logging, cost, helpers
-└── tests/           # pytest suite
+│   ├── dialogue/   # transcript chunking + dialogue generation
+│   ├── audio/      # TTS + stitching
+│   ├── visuals/    # Manim + slide composer
+│   ├── outputs/    # PPT/story exporters
+│   ├── pipeline/   # CLI/GUI orchestration
+│   └── utils/      # config, logging, storage, costs
+├── scripts/        # CLI entry points
+├── tests/          # pytest suite
+├── assets/         # intro/outro audio
+├── data/           # sample inputs
+└── outputs/        # generated runs
 ```
 
 ## Contributing & License
-- PRs welcome (linters + pytest should pass).
-- Licensed under **MIT**.
+- PRs are welcome (linters + pytest must pass).
+- License: **MIT**.
 
 ---
 
-**Need Hebrew docs?** See [`README.he.md`](README.he.md) for the full localized guide.  
-**Issues or questions?** Open an issue in the repository.
+## מדריך בעברית (תקציר)
+למדריך מלא בעברית ראו [`README.he.md`](README.he.md).  
+הקטעים הבאים נשמרו לטובת עבודה בעברית מקצה לקצה (דיאלוג, TTS, ויזואליים, העלויות, מבנה הריצה והפתרון בעיות בעברית).
 
