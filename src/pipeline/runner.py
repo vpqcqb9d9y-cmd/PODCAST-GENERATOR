@@ -386,7 +386,119 @@ class LecturePipeline:
 
             dialogue_json = json.loads(dialogue_file.read_text(encoding="utf-8"))
             expected_segments = len(dialogue_json.get("dialogue", [])) if isinstance(dialogue_json, dict) else 0
+
+            # Align visual metadata with requested image_count (CLI overrides).
+            try:
+                desired_image_count = int(getattr(self.settings, "image_count", 5) or 5)
+            except (TypeError, ValueError):
+                desired_image_count = 5
+            current_image_count = len(visual_metadata.get("images", [])) if visual_metadata else 0
+            needs_refresh = visual_metadata is not None and current_image_count != desired_image_count
+
+            if needs_refresh:
+                self.logger.info(
+                    "[LecturePipeline.run] Refreshing visual metadata to match image_count (%d -> %d).",
+                    current_image_count,
+                    desired_image_count,
+                )
+                try:
+                    refreshed_meta = self._auto_generate_visual_metadata(
+                        metadata=metadata,
+                        dialogue_json=dialogue_json,
+                        transcript_text=transcript_text,
+                        run_paths=run_paths,
+                    )
+                except Exception as refresh_exc:
+                    refreshed_meta = None
+                    self.logger.warning(
+                        "[LecturePipeline.run] Visual metadata refresh failed: %s",
+                        refresh_exc,
+                        exc_info=True,
+                    )
+
+                if refreshed_meta and refreshed_meta.get("images"):
+                    # Preserve curated prompts but top-up/truncate to requested count
+                    base_images = list(visual_metadata.get("images", [])) if visual_metadata else []
+                    new_images = refreshed_meta.get("images", [])
+                    combined: List[Dict] = []
+
+                    # Keep existing order up to desired count
+                    for img in base_images:
+                        combined.append(img)
+                        if len(combined) >= desired_image_count:
+                            break
+
+                    next_index = len(combined) + 1
+                    for img in new_images:
+                        if len(combined) >= desired_image_count:
+                            break
+                        clone = dict(img)
+                        clone["index"] = next_index
+                        combined.append(clone)
+                        next_index += 1
+
+                    visual_metadata = visual_metadata or {}
+                    visual_metadata["images"] = combined[:desired_image_count]
+                    if refreshed_meta.get("video"):
+                        visual_metadata["video"] = refreshed_meta.get("video")
+                    if refreshed_meta.get("background") and not visual_metadata.get("background"):
+                        visual_metadata["background"] = refreshed_meta.get("background")
+                    if refreshed_meta.get("general_notes") and not visual_metadata.get("general_notes"):
+                        visual_metadata["general_notes"] = refreshed_meta.get("general_notes")
+
+                    target_visual_path = run_paths.run_dir / "visual_metadata.json"
+                    try:
+                        target_visual_path.write_text(
+                            json.dumps(visual_metadata, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        run_paths.log(
+                            f"[Visual Metadata] Refreshed to {desired_image_count} prompt(s) per CLI request."
+                        )
+                        self.logger.info(
+                            "[LecturePipeline.run] Visual metadata refreshed and saved to %s",
+                            target_visual_path,
+                        )
+                    except Exception as persist_exc:
+                        self.logger.warning(
+                            "[LecturePipeline.run] Failed to persist refreshed visual metadata: %s",
+                            persist_exc,
+                            exc_info=True,
+                        )
             
+            requested_images = self._requested_image_count()
+            if visual_metadata and visual_metadata.get("images"):
+                try:
+                    refreshed = self._refresh_visual_metadata_if_needed(
+                        visual_metadata=visual_metadata,
+                        requested_images=requested_images,
+                        metadata=metadata,
+                        dialogue_json=dialogue_json,
+                        transcript_text=transcript_text,
+                        run_paths=run_paths,
+                    )
+                    if refreshed is not None:
+                        visual_metadata = refreshed
+                        visual_metadata_source = run_paths.run_dir / "visual_metadata.json"
+                        visual_metadata_log = (
+                            f"[Visual Metadata] Synced to {requested_images} prompt(s) after CLI change."
+                        )
+                        try:
+                            visual_metadata_source.write_text(
+                                json.dumps(visual_metadata, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                        except Exception as exc:
+                            self.logger.warning(
+                                "[LecturePipeline.run] Failed to write refreshed visual metadata: %s",
+                                exc,
+                            )
+                except Exception as exc:
+                    self.logger.warning(
+                        "[LecturePipeline.run] Visual metadata refresh skipped due to error: %s",
+                        exc,
+                    )
+
             if not visual_metadata or not visual_metadata.get("images"):
                 run_paths.log("Generating visual metadata from transcript and dialogue.")
                 visual_meta_start = time.time()
@@ -850,6 +962,81 @@ class LecturePipeline:
     def _metadata_needs_seed(self, metadata: Dict) -> bool:
         essential = ("topic", "summary", "key_concepts")
         return not any(metadata.get(field) for field in essential)
+
+    def _requested_image_count(self) -> int:
+        """
+        Normalize the requested image_count from settings.
+        """
+        try:
+            return max(1, int(getattr(self.settings, "image_count", 5)))
+        except Exception:
+            return 5
+
+    def _refresh_visual_metadata_if_needed(
+        self,
+        visual_metadata: Dict,
+        requested_images: int,
+        metadata: Dict,
+        dialogue_json: Dict,
+        transcript_text: str,
+        run_paths: RunPaths,
+    ) -> Optional[Dict]:
+        """
+        If the existing visual_metadata.json has fewer (or more) prompts than requested,
+        regenerate to match the current CLI/settings image_count.
+        """
+        existing_images = visual_metadata.get("images", []) or []
+        if len(existing_images) == requested_images:
+            return None
+
+        self.logger.info(
+            "[LecturePipeline] Refreshing visual_metadata prompts to match image_count (%d -> %d).",
+            len(existing_images),
+            requested_images,
+        )
+
+        try:
+            regenerated = build_visual_metadata_locally(
+                metadata=metadata,
+                dialogue_json=dialogue_json or {},
+                transcript_text=transcript_text or "",
+                image_count=requested_images,
+                include_video=True,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "[LecturePipeline] Local visual metadata refresh failed (%s); using universal builder.",
+                exc,
+            )
+            regenerated = generate_universal_visual_metadata(
+                metadata,
+                transcript_length=len(transcript_text or ""),
+                image_count=requested_images,
+                include_video=True,
+            )
+
+        new_images = regenerated.get("images", []) if regenerated else []
+        if not new_images:
+            self.logger.warning("[LecturePipeline] Regenerated visual metadata is empty; keeping existing prompts.")
+            return None
+
+        merged_images = (existing_images + [img for img in new_images if img not in existing_images])[
+            :requested_images
+        ]
+        refreshed = {**visual_metadata, **regenerated}
+        refreshed["images"] = merged_images
+
+        target_path = run_paths.run_dir / "visual_metadata.json"
+        try:
+            target_path.write_text(json.dumps(refreshed, ensure_ascii=False, indent=2), encoding="utf-8")
+            self.logger.info("[LecturePipeline] Synced refreshed visual_metadata to %s", target_path)
+        except Exception as exc:
+            self.logger.warning(
+                "[LecturePipeline] Failed to persist refreshed visual metadata: %s",
+                exc,
+            )
+
+        return refreshed
 
     def _seed_metadata_from_transcript(self, metadata: Dict, transcript_text: str) -> Dict:
         self.logger.info("Metadata incomplete – attempting to auto-seed from transcript.")

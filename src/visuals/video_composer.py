@@ -95,6 +95,7 @@ class VideoComposer:
         font_title, font_body = self._load_fonts()
         topic = metadata.get("topic") or metadata.get("summary") or "תוכן חזותי"
         concepts = metadata.get("key_concepts") or []
+        speakers = metadata.get("speakers") or metadata.get("characters") or []
 
         palettes = [
             ((15, 23, 42), (79, 70, 229), (244, 114, 182)),
@@ -143,9 +144,13 @@ class VideoComposer:
             draw.text((120, 320), subline, font=font_body, fill=(240, 240, 240))
             draw.text((120, 420), caption, font=font_body, fill=(220, 220, 220))
 
+            if speakers:
+                speaker_line = "דוברים: " + ", ".join(speakers[:4])
+                draw.text((120, 520), speaker_line, font=font_body, fill=(210, 210, 210))
+
             badge_text = "AI · Hebrew · Placeholder"
-            draw.rectangle([(120, 500), (700, 560)], fill=(0, 0, 0, 120), outline=None)
-            draw.text((140, 515), badge_text, font=font_body, fill=(255, 255, 255))
+            draw.rectangle([(120, 580), (700, 640)], fill=(0, 0, 0, 120), outline=None)
+            draw.text((140, 595), badge_text, font=font_body, fill=(255, 255, 255))
 
             filename = f"placeholder_{start_index + idx:02d}.png"
             path = output_dir / filename
@@ -562,10 +567,8 @@ class VideoComposer:
                         x = (video_width - new_width) // 2
                         y = (video_height - new_height) // 2
                         bg.paste(img, (x, y))
-                        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                            bg.save(tmp.name)
-                            temp_path = tmp.name
-                        clip = ImageClip(temp_path)
+                        img_array = np.array(bg)
+                        clip = ImageClip(img_array)
                         clip = self._apply_duration(clip, duration)
                         if apply_ken_burns:
                             clip = self.apply_ken_burns(clip)
@@ -574,7 +577,12 @@ class VideoComposer:
                             "Added image clip %s (%.2fs) - resized to %dx%d", media.name, duration, new_width, new_height
                         )
                     except Exception as img_err:
-                        self.logger.warning("Failed to process image %s: %s, using placeholder fallback", media.name, img_err)
+                        self.logger.warning(
+                            "Failed to process image %s: %s, using placeholder fallback",
+                            media.name,
+                            img_err,
+                            exc_info=True,
+                        )
                         placeholder = None
                         try:
                             placeholder_paths = self._create_placeholder_slides(
@@ -585,7 +593,7 @@ class VideoComposer:
                             )
                             placeholder = placeholder_paths[0] if placeholder_paths else None
                         except Exception as placeholder_err:
-                            self.logger.error("Placeholder generation failed: %s", placeholder_err)
+                            self.logger.error("Placeholder generation failed: %s", placeholder_err, exc_info=True)
                         if placeholder:
                             try:
                                 clip = ImageClip(str(placeholder))
@@ -606,7 +614,7 @@ class VideoComposer:
                     last_image_clip = clip
                 current_start += getattr(clip, "duration", 0.0) or 0.0
             except Exception as e:
-                self.logger.error("Failed to process asset %s: %s", media.name, e)
+                self.logger.error("Failed to process asset %s: %s", media.name, e, exc_info=True)
                 continue
 
         # Fill or trim to audio duration
@@ -672,6 +680,28 @@ class VideoComposer:
                 ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
                 clip_list = [ph_clip]
         
+        has_non_solid = any(not isinstance(c, ColorClip) for c in clip_list)
+        if not has_non_solid:
+            self.logger.warning("Only solid color clips detected; injecting placeholder slide with text.")
+            placeholder = None
+            try:
+                placeholder_paths = self._create_placeholder_slides(
+                    count=1,
+                    output_dir=output_file.parent,
+                    metadata=metadata or {},
+                    start_index=1,
+                )
+                placeholder = placeholder_paths[0] if placeholder_paths else None
+            except Exception as ph_exc:
+                self.logger.error("Failed to build placeholder slide for solid-color-only timeline: %s", ph_exc, exc_info=True)
+            if placeholder:
+                ph_clip = ImageClip(str(placeholder))
+                ph_clip = self._apply_duration(ph_clip, audio_duration or clip_list[0].duration or 1.0)
+                clip_list = [ph_clip]
+            else:
+                ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
+                clip_list = [ph_clip]
+
         # Concatenate video clips
         base = concatenate_videoclips(clip_list, method="compose")
         video_duration = base.duration
@@ -706,6 +736,13 @@ class VideoComposer:
             final.duration,
             final.audio is not None
         )
+        if abs((final.duration or 0) - (audio_duration or 0)) > 0.05:
+            self.logger.warning(
+                "Duration mismatch detected (video=%.2fs, audio=%.2fs); enforcing sync.",
+                final.duration,
+                audio_duration,
+            )
+            final = self._apply_duration(final, audio_duration)
 
         output_file.parent.mkdir(parents=True, exist_ok=True)
         

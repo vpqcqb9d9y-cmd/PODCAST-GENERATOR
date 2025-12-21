@@ -76,7 +76,9 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
 - Create a class named {class_name} that inherits from Scene.
 - Visualize the following concept in Hebrew annotations: {scene_description}
 - Use simple geometric primitives, VGroup arrangements, and animations (Create, FadeIn, Arrow).
-- Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Mobject fonts to ensure RTL support.
+- Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Paragraph fonts.
+- Add an rtl(text: str) helper that uses arabic_reshaper + bidi.get_display to render Hebrew RTL safely; every displayed string must pass through rtl(...).
+- All Text/Paragraph instances must set font=HEBREW_FONT and wrap the string with rtl(...).
 - Make sure every scene includes at least two self.wait() calls (minimum 1 second each): one after the main animation and one before ending, to avoid blank/green frames.
 - Return only valid Python code.
 """.strip()
@@ -84,6 +86,8 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
         code = response.choices[0].message.content or ""
         # Strip markdown code fences if present
         code = self._strip_code_fences(code)
+        if "HEBREW_FONT" not in code:
+            code = f'HEBREW_FONT = "{HEBREW_FONT}"\n' + code
         return code
 
     def _strip_code_fences(self, text: str) -> str:
@@ -104,6 +108,10 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
         Returns empty list if manim is not installed.
         """
         outputs: List[Path] = []
+        if not self._is_manim_available():
+            self.logger.warning("Manim CLI not found in PATH; skipping animation rendering.")
+            raise RuntimeError("Manim CLI not available in PATH")
+
         for scene_file in scenes_directory.glob("*.py"):
             try:
                 class_name = self._extract_scene_class(scene_file)
@@ -117,7 +125,7 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
                 subprocess.run(cmd, check=True, cwd=scenes_directory)
             except FileNotFoundError:
                 self.logger.warning("Manim not installed; skipping animation rendering.")
-                return []
+                raise RuntimeError("Manim executable not found during render")
             except subprocess.CalledProcessError as exc:
                 self.logger.error("Manim failed for %s: %s", scene_file.name, exc)
                 continue
@@ -200,6 +208,8 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
             scene_file = run_paths.visuals_dir / f"{class_name}.py"
             scene_file.write_text(code, encoding="utf-8")
         rendered = self.render_scenes(run_paths.visuals_dir)
+        if scenes and not rendered:
+            raise RuntimeError("Manim scene rendering failed: no outputs were produced.")
         return rendered
 
     def _extract_scene_class(self, scene_file: Path) -> str:
@@ -209,6 +219,10 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
             if match:
                 return match.group(1)
         raise ValueError(f"No Scene subclass found in {scene_file.name}")
+
+    def _is_manim_available(self) -> bool:
+        """Check whether the Manim CLI is available in PATH."""
+        return shutil.which("manim") is not None
 
     def _parse_scene_suggestions(self, raw_text: str) -> List[Dict[str, str]]:
         """Parse JSON list of scene descriptions from LLM response."""
