@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 import re
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import google.generativeai as genai
 from openai import AzureOpenAI
@@ -570,16 +570,49 @@ class MetadataChatSession:
         metadata = payload.get("metadata") or {}
         return assistant_text, metadata
 
-    def _merge_metadata(self, patch: Dict) -> None:
+    def _merge_metadata(self, patch: Dict[str, Any]) -> None:
+        """
+        Merge AI-returned metadata into the current metadata with strict type handling.
+
+        Rules:
+        - If incoming is list and existing is list: merge unique.
+        - If types mismatch (str vs list, etc.): incoming overwrites existing.
+        - Avoid turning strings into list-of-chars; wrap string as a single-element
+          list when existing is list and incoming is string.
+        - Never raise on a single bad field; log and continue.
+        """
         for key, value in patch.items():
-            if value in (None, "", []):
-                continue
-            if isinstance(value, list):
-                existing = self.current_metadata.setdefault(key, [])
-                merged = existing + [item for item in value if item not in existing]
-                self.current_metadata[key] = merged
-            else:
-                self.current_metadata[key] = value
+            try:
+                if value in (None, "", []):
+                    continue
+
+                existing = self.current_metadata.get(key)
+
+                if isinstance(value, list):
+                    if isinstance(existing, list):
+                        merged = existing + [item for item in value if item not in existing]
+                        self.current_metadata[key] = merged
+                    else:
+                        self.logger.warning(
+                            "Type mismatch for field '%s': existing=%s, incoming=list; overwriting with incoming list",
+                            key,
+                            type(existing).__name__ if existing is not None else "None",
+                        )
+                        self.current_metadata[key] = value
+                else:
+                    if isinstance(existing, list) and isinstance(value, str):
+                        # Preserve list semantics without splitting the string into characters
+                        self.logger.warning(
+                            "Type mismatch for field '%s': existing=list, incoming=str; wrapping string as single-element list",
+                            key,
+                        )
+                        self.current_metadata[key] = [value]
+                    else:
+                        self.current_metadata[key] = value
+            except Exception as exc:  # pragma: no cover - defensive merge guard
+                self.logger.warning(
+                    "Failed to merge metadata field '%s': %s", key, exc, exc_info=True
+                )
 
     def _metadata_needs_seed(self) -> bool:
         required = ("topic", "summary", "key_concepts")
