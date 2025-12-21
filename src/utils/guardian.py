@@ -72,6 +72,12 @@ class ProductionGuardian:
                 # Re-validate including the regenerated assets
                 valid_images = self._validate_images(valid_images + regenerated)
 
+        # If no visuals survived, inject a high-quality placeholder to prevent grey/blank video
+        if not valid_images and not video_assets:
+            placeholder = self._generate_placeholder(metadata or {}, visuals_dir)
+            if placeholder:
+                valid_images = [placeholder]
+
         adaptive = False
         if len(valid_images) < max(1, expected_images):
             adaptive = True
@@ -106,6 +112,11 @@ class ProductionGuardian:
             try:
                 if not image_path.exists():
                     continue
+                size_kb = image_path.stat().st_size / 1024
+                if size_kb < 8:
+                    self.logger.warning("Discarding tiny image (%.1fKB): %s", size_kb, image_path.name)
+                    image_path.unlink(missing_ok=True)
+                    continue
                 if cv2 is None:
                     valid.append(image_path)
                     continue
@@ -126,6 +137,15 @@ class ProductionGuardian:
                 mean_intensity = float(cv2.mean(img)[0])
                 if mean_intensity < 2.5:
                     self.logger.warning("Discarding black frame: %s (mean=%.2f)", image_path.name, mean_intensity)
+                    image_path.unlink(missing_ok=True)
+                    continue
+
+                # Detect flat/empty frames (uniform gray) that can sneak through
+                std_intensity = float(np.std(img))
+                if std_intensity < 1.5:
+                    self.logger.warning(
+                        "Discarding flat frame: %s (std=%.2f, mean=%.2f)", image_path.name, std_intensity, mean_intensity
+                    )
                     image_path.unlink(missing_ok=True)
                     continue
 
@@ -185,6 +205,42 @@ class ProductionGuardian:
             except Exception as exc:  # pragma: no cover - defensive
                 self.logger.warning("Error validating video %s: %s", video_path.name, exc)
         return sorted(valid)
+
+    def _generate_placeholder(self, metadata: Dict, visuals_dir: Path) -> Optional[Path]:
+        """Generate a simple gradient placeholder to avoid blank outputs."""
+        try:
+            visuals_dir.mkdir(parents=True, exist_ok=True)
+            width, height = 1920, 1080
+            from PIL import Image, ImageDraw, ImageFont
+
+            img = Image.new("RGB", (width, height))
+            draw = ImageDraw.Draw(img)
+            for y in range(height):
+                ratio = y / max(height - 1, 1)
+                r = int(20 + 45 * ratio)
+                g = int(28 + 60 * ratio)
+                b = int(58 + 90 * ratio)
+                draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+            try:
+                font_title = ImageFont.truetype("arial.ttf", 64)
+                font_body = ImageFont.truetype("arial.ttf", 36)
+            except OSError:
+                font_title = ImageFont.load_default()
+                font_body = ImageFont.load_default()
+
+            headline = metadata.get("topic") or "תוכן חזותי ייווצר לאחר שחזור רשת"
+            caption = metadata.get("summary") or "ממתינים לשירות ה-AI או לחיבור יציב יותר."
+            draw.text((120, 320), str(headline), font=font_title, fill=(245, 245, 245))
+            draw.text((120, 420), str(caption)[:140], font=font_body, fill=(220, 220, 220))
+
+            out_path = visuals_dir / "guardian_placeholder.png"
+            img.save(out_path, quality=95)
+            self.logger.info("Guardian generated placeholder: %s", out_path.name)
+            return out_path
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.warning("Failed to generate guardian placeholder: %s", exc)
+            return None
 
     def _attempt_regeneration(
         self,

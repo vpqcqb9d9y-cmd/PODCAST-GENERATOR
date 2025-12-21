@@ -696,6 +696,9 @@ class PodcastGeneratorWindow(QMainWindow):
         self.pipeline_status_timer.setInterval(1000)
         self.pipeline_status_timer.timeout.connect(self._on_pipeline_status_tick)
 
+        # Track the most recent heartbeat silence window (seconds since last output)
+        self._last_heartbeat_seconds: float = 0.0
+
         # Default state: hidden until a run actually starts
         self.header_stage_label.setText("Pipeline idle")
         if self.header_timer_label:
@@ -3536,6 +3539,7 @@ class PodcastGeneratorWindow(QMainWindow):
         self.pipeline_stage_index = 0
         self.pipeline_start_time = time.perf_counter()
         self._current_stage_start = self.pipeline_start_time
+        self._last_heartbeat_seconds = 0.0
         self._reveal_run_status_card(scroll_into_view=True)
         self._refresh_pipeline_status(label="מאתחל Pipeline", percent=0)
         if self.pipeline_status_timer:
@@ -3582,6 +3586,15 @@ class PodcastGeneratorWindow(QMainWindow):
             return
         if self.worker and self.worker.isRunning():
             self._refresh_pipeline_status()
+            if self._last_heartbeat_seconds >= 8:
+                quiet_note = f"Network latency / Processing… {int(self._last_heartbeat_seconds)}s without output"
+                timer_text = self.run_timer_label.text() if self.run_timer_label else ""
+                combined = quiet_note if not timer_text else f"{timer_text} | {quiet_note}"
+                if self.run_timer_label:
+                    self.run_timer_label.setText(combined)
+                current_percent = self.run_progress_bar.value() if self.run_progress_bar else 0
+                current_label = self.run_stage_label.text() if self.run_stage_label else "Pipeline רץ"
+                self._update_header_status(current_label, current_percent, combined, running=True)
         elif self.pipeline_stage_index and self.pipeline_stage_index < len(self.pipeline_stages):
             # Keep updating elapsed time while finishing UI updates
             self._refresh_pipeline_status()
@@ -3596,10 +3609,13 @@ class PodcastGeneratorWindow(QMainWindow):
         """
         if not self.run_status_card:
             return
+        self._last_heartbeat_seconds = max(0.0, seconds_since_output)
         # Refresh ETA/progress even without new log lines
         self._refresh_pipeline_status()
         if seconds_since_output >= 5:
-            heartbeat_note = f"⏳ אין פלט {int(seconds_since_output)} שניות – התהליך עדיין רץ"
+            heartbeat_note = (
+                f"Network latency / Processing… quiet for {int(seconds_since_output)}s; still running"
+            )
             timer_text = self.run_timer_label.text() if self.run_timer_label else ""
             combined = heartbeat_note if not timer_text else f"{timer_text} | {heartbeat_note}"
             if self.run_timer_label:
@@ -3607,6 +3623,14 @@ class PodcastGeneratorWindow(QMainWindow):
             current_percent = self.run_progress_bar.value() if self.run_progress_bar else 0
             current_label = self.run_stage_label.text() if self.run_stage_label else "Pipeline רץ"
             self._update_header_status(current_label, current_percent, combined, running=True)
+        else:
+            # Clear latency note once output resumes
+            self._last_heartbeat_seconds = 0.0
+            if self.run_timer_label:
+                current_timer = self.run_timer_label.text() or ""
+                # Remove any appended heartbeat hint if present
+                if "Network latency / Processing" in current_timer and " | " in current_timer:
+                    self.run_timer_label.setText(current_timer.split(" | ")[0])
 
     def _on_worker_stall(self, seconds_since_output: float) -> None:
         """Show a visible warning if the worker reports a stall."""
@@ -5181,6 +5205,12 @@ class PodcastGeneratorWindow(QMainWindow):
 
     def _apply_chat_preferences(self) -> None:
         """Apply chat appearance preferences to all relevant widgets."""
+        try:
+            # Always reload persisted UI prefs so resets do not revert to env defaults
+            self.settings._load_ui_preferences()
+        except Exception:
+            pass
+
         config = self._chat_theme_config()
         font = self._resolve_chat_font()
         font_family = font.family()

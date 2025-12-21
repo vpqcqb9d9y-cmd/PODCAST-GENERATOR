@@ -101,6 +101,13 @@ class GoogleAIVisualGenerator:
             self.logger.warning("GEMINI_API_KEY not configured. Google AI visuals will be disabled.")
             return
         
+        # Configure google.generativeai if available (needed for tests and legacy clients)
+        try:
+            import google.generativeai as genai_config  # type: ignore
+            genai_config.configure(api_key=self.settings.gemini_api_key)
+        except ImportError:
+            pass
+
         try:
             from google import genai  # type: ignore
             from google.genai import types  # type: ignore
@@ -374,7 +381,8 @@ class GoogleAIVisualGenerator:
                 return output_path
 
             if getattr(self, "_genai_client", None):
-                attempts = 2
+                attempts = 4
+                backoff_base = 1.5
                 for attempt in range(1, attempts + 1):
                     try:
                         self.logger.info(
@@ -443,14 +451,29 @@ class GoogleAIVisualGenerator:
                             attempt,
                             attempts,
                         )
-                        time.sleep(min(1.5, 0.7 * attempt))
-                raise RuntimeError(f"Imagen API failed after {attempts} attempts for model {self._imagen_model}")
+                        if attempt < attempts:
+                            backoff = min(8.0, backoff_base * attempt)
+                            self.logger.info("Retrying after %.1fs due to network/latency issue", backoff)
+                            time.sleep(backoff)
+                self.logger.warning(
+                    "Imagen API failed after %d attempts for model %s. Falling back to placeholder.",
+                    attempts,
+                    self._imagen_model,
+                )
+                self._generate_placeholder_image(prompt, output_path, aspect_ratio=aspect_ratio)
+                return output_path if output_path.exists() else None
             else:
-                raise RuntimeError("Google AI client not initialized for Imagen 4 generation")
+                self.logger.warning("Google AI client not initialized for Imagen 4 generation; creating placeholder.")
+                self._generate_placeholder_image(prompt, output_path, aspect_ratio=aspect_ratio)
+                return output_path if output_path.exists() else None
         except Exception as exc:
-            # Surface full traceback instead of silent fail
-            self.logger.exception("Imagen generation raised exception")
-            raise
+            # Surface full traceback instead of silent fail, but fall back to placeholder to keep pipeline alive
+            self.logger.exception("Imagen generation raised exception; generating placeholder")
+            try:
+                self._generate_placeholder_image(prompt, output_path, aspect_ratio=aspect_ratio)
+                return output_path if output_path.exists() else None
+            except Exception:
+                raise
 
     def _try_generate_image_legacy(
         self,
@@ -950,7 +973,7 @@ class GoogleAIVisualGenerator:
         topic_text = (metadata or {}).get("topic", "") if metadata else ""
         topic_lower = topic_text.lower()
         non_cloud_topic = not any(word in topic_lower for word in ["azure", "cloud"])
-
+        
         if generate_images and images:
             self.logger.info("=" * 60)
             self.logger.info("      GENERATING IMAGES FROM VISUAL METADATA")

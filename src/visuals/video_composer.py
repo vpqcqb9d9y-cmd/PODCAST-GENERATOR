@@ -565,9 +565,32 @@ class VideoComposer:
                             "Added image clip %s (%.2fs) - resized to %dx%d", media.name, duration, new_width, new_height
                         )
                     except Exception as img_err:
-                        self.logger.warning("Failed to process image %s: %s, using fallback", media.name, img_err)
-                        clip = ColorClip(size=(1920, 1080), color=(64, 64, 64), duration=duration)
-                        clip = self._apply_start(clip, current_start)
+                        self.logger.warning("Failed to process image %s: %s, using placeholder fallback", media.name, img_err)
+                        placeholder = None
+                        try:
+                            placeholder_paths = self._create_placeholder_slides(
+                                count=1,
+                                output_dir=animations_dir,
+                                metadata=metadata,
+                                start_index=len(clips) + 1,
+                            )
+                            placeholder = placeholder_paths[0] if placeholder_paths else None
+                        except Exception as placeholder_err:
+                            self.logger.error("Placeholder generation failed: %s", placeholder_err)
+                        if placeholder:
+                            try:
+                                clip = ImageClip(str(placeholder))
+                                clip = self._apply_duration(clip, duration)
+                                if apply_ken_burns:
+                                    clip = self.apply_ken_burns(clip)
+                                clip = self._apply_start(clip, current_start)
+                            except Exception as ph_err:
+                                self.logger.error("Placeholder clip failed, reverting to color fill: %s", ph_err)
+                                clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=duration)
+                                clip = self._apply_start(clip, current_start)
+                        else:
+                            clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=duration)
+                            clip = self._apply_start(clip, current_start)
                 clips.append(clip)
                 if asset_type == "image":
                     last_image_index = len(clips) - 1
@@ -603,6 +626,7 @@ class VideoComposer:
         audio_file: Path,
         output_file: Path,
         dialogue_json: Optional[Dict] = None,
+        metadata: Optional[Dict] = None,
     ) -> Path:
         """
         Composite all clips, set audio track, export MP4 (1080p, 30fps, H.264).
@@ -616,6 +640,28 @@ class VideoComposer:
         audio = AudioFileClip(str(audio_file))
         audio_duration = audio.duration
         self.logger.info("Audio duration: %.2f seconds", audio_duration)
+
+        # If no clips survived validation, generate a placeholder to avoid blank/grey output
+        if not clip_list:
+            self.logger.warning("No valid clips to render; generating placeholder slide clip.")
+            placeholder = None
+            try:
+                placeholder_paths = self._create_placeholder_slides(
+                    count=1,
+                    output_dir=output_file.parent,
+                    metadata=metadata or {},
+                    start_index=1,
+                )
+                placeholder = placeholder_paths[0] if placeholder_paths else None
+            except Exception as ph_exc:
+                self.logger.error("Failed to build placeholder slide: %s", ph_exc)
+            if placeholder:
+                ph_clip = ImageClip(str(placeholder))
+                ph_clip = self._apply_duration(ph_clip, audio_duration or 1.0)
+                clip_list = [ph_clip]
+            else:
+                ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
+                clip_list = [ph_clip]
         
         # Concatenate video clips
         base = concatenate_videoclips(clip_list, method="compose")
@@ -933,6 +979,7 @@ class VideoComposer:
             run_paths.final_audio_path,
             run_paths.final_video_path,
             dialogue_json=dialogue_json,
+            metadata=metadata,
         )
         elapsed = time.perf_counter() - start
         self.logger.info("Video composition completed in %.2fs (clips=%s)", elapsed, len(clips))
