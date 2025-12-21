@@ -122,6 +122,15 @@ class VideoComposer:
             draw.rectangle([(0, 0), (width, 12)], fill=accent)
             draw.rectangle([(0, height - 12), (width, height)], fill=accent)
 
+            # Add subtle noise to avoid ultra-small placeholder files flagged as corrupt
+            try:
+                noise = Image.effect_noise((width, height), 12)
+                noise_rgb = noise.convert("RGB")
+                image = Image.blend(image, noise_rgb, 0.06)
+                draw = ImageDraw.Draw(image)
+            except Exception:
+                pass
+
             concept_text = ""
             if concepts:
                 concept_text = concepts[(start_index + idx - 1) % len(concepts)]

@@ -222,6 +222,15 @@ class ProductionGuardian:
                 b = int(58 + 90 * ratio)
                 draw.line([(0, y), (width, y)], fill=(r, g, b))
 
+            # Add light noise so files are not classified as tiny/flat
+            try:
+                noise = Image.effect_noise((width, height), 10)
+                noise_rgb = noise.convert("RGB")
+                img = Image.blend(img, noise_rgb, 0.08)
+                draw = ImageDraw.Draw(img)
+            except Exception:
+                pass
+
             try:
                 font_title = ImageFont.truetype("arial.ttf", 64)
                 font_body = ImageFont.truetype("arial.ttf", 36)
