@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -160,8 +161,8 @@ class VisualSettingsDialog(QDialog):
     def _setup_ui(self) -> None:
         """Build the dialog UI components with scroll area."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(6)
         
         # Create scroll area for all content
         scroll = QScrollArea()
@@ -172,8 +173,8 @@ class VisualSettingsDialog(QDialog):
         # Content widget inside scroll area
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 12, 12)
         
         # Title
         title = QLabel("🎨 הגדרות יצירת ויזואליים")
@@ -191,6 +192,7 @@ class VisualSettingsDialog(QDialog):
 
         # Visual Generator Group
         generator_group = QGroupBox("מנוע יצירת ויזואליים")
+        generator_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         generator_layout = QFormLayout(generator_group)
         
         self.generator_combo = QComboBox()
@@ -228,6 +230,7 @@ class VisualSettingsDialog(QDialog):
 
         # Google AI Models Group
         self.google_ai_group = QGroupBox("מודלי Google AI")
+        self.google_ai_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         google_layout = QFormLayout(self.google_ai_group)
         
         # Imagen Model Selection
@@ -405,6 +408,7 @@ class VisualSettingsDialog(QDialog):
         
         # AI Helper Section - Always visible (outside google_ai_group)
         ai_group = QGroupBox("🤖 עזרת AI")
+        ai_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         ai_layout = QVBoxLayout(ai_group)
         
         ai_desc = QLabel(
@@ -447,6 +451,7 @@ class VisualSettingsDialog(QDialog):
 
         # Video Duration Settings
         duration_group = QGroupBox("הגדרות משך וידאו")
+        duration_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         duration_layout = QFormLayout(duration_group)
         
         # Duration explanation banner
@@ -601,6 +606,7 @@ class VisualSettingsDialog(QDialog):
 
         # Cost estimate section
         cost_group = QGroupBox("הערכת עלויות")
+        cost_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         cost_layout = QVBoxLayout(cost_group)
         
         self.cost_label = QLabel()
@@ -610,8 +616,8 @@ class VisualSettingsDialog(QDialog):
         
         layout.addWidget(cost_group)
         
-        # Add stretch to push content up
-        layout.addStretch(1)
+        # Small spacer instead of large stretch to avoid unnecessary scroll depth
+        layout.addSpacing(6)
         
         # Set content widget in scroll area
         scroll.setWidget(content)

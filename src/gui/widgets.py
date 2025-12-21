@@ -244,7 +244,11 @@ class ChatBubbleDelegate(QStyledItemDelegate):
         available_width = max(220, available_width - 40)
         
         self._doc.setDefaultFont(self._get_font(option))
-        self._doc.setDefaultTextOption(QTextOption(Qt.AlignmentFlag.AlignLeft))
+        # Auto-detect RTL to render mixed Hebrew/English correctly
+        is_rtl = _text_is_rtl(text)
+        text_option = QTextOption(Qt.AlignmentFlag.AlignRight if is_rtl else Qt.AlignmentFlag.AlignLeft)
+        text_option.setTextDirection(Qt.LayoutDirection.RightToLeft if is_rtl else Qt.LayoutDirection.LeftToRight)
+        self._doc.setDefaultTextOption(text_option)
         self._doc.setTextWidth(available_width)
         self._doc.setPlainText(text)
         doc_size = self._doc.size().toSize()
@@ -314,6 +318,10 @@ class ChatBubbleDelegate(QStyledItemDelegate):
         width = max(220, width - 40)
         
         self._doc.setDefaultFont(self._get_font(option))
+        is_rtl = _text_is_rtl(text)
+        text_option = QTextOption(Qt.AlignmentFlag.AlignRight if is_rtl else Qt.AlignmentFlag.AlignLeft)
+        text_option.setTextDirection(Qt.LayoutDirection.RightToLeft if is_rtl else Qt.LayoutDirection.LeftToRight)
+        self._doc.setDefaultTextOption(text_option)
         self._doc.setTextWidth(width)
         self._doc.setPlainText(text)
         doc_size = self._doc.size().toSize()
