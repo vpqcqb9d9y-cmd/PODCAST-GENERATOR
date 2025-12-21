@@ -240,8 +240,22 @@ def _build_chat_card(
     parent.chat_history.setVerticalScrollMode(
         QAbstractItemView.ScrollMode.ScrollPerPixel
     )
-    parent.chat_history.setSpacing(8)
+    parent.chat_history.setSpacing(6)
     parent.chat_history.setResizeMode(QListView.ResizeMode.Adjust)
+    parent.chat_history.setContentsMargins(0, 0, 0, 0)
+    parent.chat_history.setViewportMargins(0, 0, 0, 0)
+    parent.chat_history.setStyleSheet(
+        """
+        QListWidget#ChatHistory {
+            padding: 0px;
+            margin: 0px;
+            border: none;
+        }
+        QListWidget#ChatHistory::item {
+            margin: 0px;
+        }
+        """
+    )
     
     # Set up bubble delegate
     parent.chat_delegate = ChatBubbleDelegate(
