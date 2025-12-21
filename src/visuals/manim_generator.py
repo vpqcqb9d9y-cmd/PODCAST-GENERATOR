@@ -6,6 +6,7 @@ import subprocess
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Dict, List
 
 from openai import APIError, APITimeoutError, AzureOpenAI, RateLimitError
@@ -104,13 +105,23 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
 
     def render_scenes(self, scenes_directory: Path) -> List[Path]:
         """
-        Execute `manim -qm -o output.mp4 scene.py ClassName` for each scene file.
-        Returns empty list if manim is not installed.
+        Execute Manim for each scene file.
+        Uses `manim` CLI if on PATH, otherwise falls back to `python -m manim`
+        (still requires manim to be importable in the current environment).
         """
         outputs: List[Path] = []
-        if not self._is_manim_available():
-            self.logger.warning("Manim CLI not found in PATH; skipping animation rendering.")
-            raise RuntimeError("Manim CLI not available in PATH")
+        manim_exec = shutil.which("manim")
+        if manim_exec:
+            base_cmd = [manim_exec]
+        else:
+            # Fallback: try module invocation
+            try:
+                import manim  # noqa: F401
+                base_cmd = [sys.executable, "-m", "manim"]
+                self.logger.info("Manim not on PATH; using module fallback via python -m manim")
+            except Exception:
+                self.logger.warning("Manim CLI not found and module import failed; skipping animation rendering.")
+                raise RuntimeError("Manim CLI not available in PATH")
 
         for scene_file in scenes_directory.glob("*.py"):
             try:
@@ -119,12 +130,22 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
                 self.logger.warning("Skipping %s: %s", scene_file.name, exc)
                 continue
             output_name = scene_file.with_suffix(".mp4").name
-            cmd = ["manim", "-qm", "-o", output_name, str(scene_file), class_name]
+            scene_path = scene_file.resolve()
+            media_dir = scenes_directory / "media"
+            cmd = base_cmd + [
+                "-qm",
+                "--media_dir",
+                str(media_dir),
+                "-o",
+                output_name,
+                str(scene_path),
+                class_name,
+            ]
             self.logger.info("Rendering %s", scene_file.name)
             try:
-                subprocess.run(cmd, check=True, cwd=scenes_directory)
+                subprocess.run(cmd, check=True)
             except FileNotFoundError:
-                self.logger.warning("Manim not installed; skipping animation rendering.")
+                self.logger.warning("Manim executable not found during render.")
                 raise RuntimeError("Manim executable not found during render")
             except subprocess.CalledProcessError as exc:
                 self.logger.error("Manim failed for %s: %s", scene_file.name, exc)
@@ -221,8 +242,16 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
         raise ValueError(f"No Scene subclass found in {scene_file.name}")
 
     def _is_manim_available(self) -> bool:
-        """Check whether the Manim CLI is available in PATH."""
-        return shutil.which("manim") is not None
+        """
+        Check whether the Manim CLI is available in PATH or importable via python -m manim.
+        """
+        if shutil.which("manim"):
+            return True
+        try:
+            import manim  # noqa: F401
+            return True
+        except Exception:
+            return False
 
     def _parse_scene_suggestions(self, raw_text: str) -> List[Dict[str, str]]:
         """Parse JSON list of scene descriptions from LLM response."""
