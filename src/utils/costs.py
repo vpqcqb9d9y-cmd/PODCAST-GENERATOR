@@ -12,6 +12,7 @@ Version: 1.1.0
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from typing import Dict
 
 from src.utils.pricing import PRICING
@@ -109,4 +110,35 @@ class CostTracker:
             "tts_cost_usd": self.tts_cost,
             "visual_cost_usd": round(self.visual_cost_usd, 4),
             "total_cost_usd": round(self.openai_cost + self.tts_cost + self.visual_cost_usd, 4),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
+
+
+def get_cycle_start_date(reset_day: int, today: date | None = None) -> datetime:
+    """
+    Calculate the start date of the current billing cycle (UTC-aware).
+
+    Args:
+        reset_day: Day of month the cycle resets (1-31, clamped).
+        today: Optional override for today's date (UTC date).
+
+    Returns:
+        datetime with tzinfo=UTC representing the start of the active billing cycle at midnight UTC.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+
+    safe_day = max(1, min(31, int(reset_day or 1)))
+    if today.day >= safe_day:
+        cycle_year, cycle_month = today.year, today.month
+    else:
+        cycle_year, cycle_month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+
+    try:
+        import calendar
+
+        start_day = min(safe_day, calendar.monthrange(cycle_year, cycle_month)[1])
+    except Exception:
+        start_day = safe_day
+
+    return datetime(cycle_year, cycle_month, start_day, tzinfo=timezone.utc)

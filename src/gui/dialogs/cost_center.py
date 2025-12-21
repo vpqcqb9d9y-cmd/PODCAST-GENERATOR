@@ -12,7 +12,8 @@ Version: 2.0.0 - Redesigned with tabbed interface
 from __future__ import annotations
 
 import calendar
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt
@@ -35,12 +36,15 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 from pyqtgraph import PlotWidget
 
 from src.utils import HistoryManager, Settings
+from src.utils.costs import get_cycle_start_date
 from src.utils.pricing import (
     PRICING,
     azure_vs_elevenlabs_diff,
@@ -105,6 +109,19 @@ QHeaderView::section:last {
 """
 
 
+@dataclass
+class ProviderBudget:
+    """Container for budget row rendering."""
+    service: str
+    usage: str
+    cost: str
+    budget: str
+    pct: float
+    reset_day: int
+    days_left: int
+    time_pct: float
+
+
 class CostCenterDialog(QDialog):
     """
     Cost management and analytics dialog with tabbed interface.
@@ -140,6 +157,7 @@ class CostCenterDialog(QDialog):
     def _setup_window(self) -> None:
         """Configure window properties."""
         self.setWindowTitle("מרכז עלויות וניתוח")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.resize(900, 700)
         self.setMinimumHeight(500)
         self.setMinimumWidth(700)
@@ -204,47 +222,65 @@ class CostCenterDialog(QDialog):
         self.budget_table = self._create_budget_table()
         layout.addWidget(self.budget_table)
         
-        # Budget limits controls
-        limits_row = QHBoxLayout()
-        limits_row.addWidget(QLabel("מגבלת AI:"))
+        # Budget limits controls (grid for clean alignment)
+        limits_grid = QGridLayout()
+        limits_grid.setHorizontalSpacing(12)
+        limits_grid.setVerticalSpacing(8)
+
         self.openai_spin = QDoubleSpinBox()
         self.openai_spin.setPrefix("$ ")
         self.openai_spin.setRange(10.0, 5000.0)
         self.openai_spin.setValue(self.settings.monthly_openai_cost_limit)
-        limits_row.addWidget(self.openai_spin)
+        limits_grid.addWidget(QLabel("מגבלת AI:"), 0, 0)
+        limits_grid.addWidget(self.openai_spin, 0, 1)
         
-        limits_row.addWidget(QLabel("מגבלת TTS:"))
         self.tts_spin = QDoubleSpinBox()
         self.tts_spin.setRange(50000, 5000000)
         self.tts_spin.setDecimals(0)
         self.tts_spin.setSuffix(" תווים")
         self.tts_spin.setValue(float(self.settings.monthly_tts_character_limit))
-        limits_row.addWidget(self.tts_spin)
+        limits_grid.addWidget(QLabel("מגבלת TTS:"), 0, 2)
+        limits_grid.addWidget(self.tts_spin, 0, 3)
 
-        limits_row.addWidget(QLabel("מגבלת ElevenLabs:"))
         self.elevenlabs_spin = QDoubleSpinBox()
         self.elevenlabs_spin.setRange(50000, 5000000)
         self.elevenlabs_spin.setDecimals(0)
         self.elevenlabs_spin.setSuffix(" תווים")
         self.elevenlabs_spin.setValue(float(getattr(self.settings, "monthly_elevenlabs_character_limit", 100000)))
-        limits_row.addWidget(self.elevenlabs_spin)
+        limits_grid.addWidget(QLabel("מגבלת ElevenLabs:"), 0, 4)
+        limits_grid.addWidget(self.elevenlabs_spin, 0, 5)
 
-        limits_row.addWidget(QLabel("יום איפוס קרדיטים בחודש:"))
-        self.reset_day_spin = QSpinBox()
-        self.reset_day_spin.setRange(1, 31)
-        self.reset_day_spin.setValue(getattr(self.settings, "budget_reset_day", 1))
-        self.reset_day_spin.setToolTip("היום בחודש בו האשראי מתאפס (1-31)")
-        limits_row.addWidget(self.reset_day_spin)
+        self.reset_day_azure_spin = QSpinBox()
+        self.reset_day_azure_spin.setRange(1, 31)
+        self.reset_day_azure_spin.setValue(getattr(self.settings, "reset_day_azure", 14))
+        self.reset_day_azure_spin.setToolTip("היום בחודש בו Azure Speech/OpenAI מתאפסים (1-31)")
+        limits_grid.addWidget(QLabel("יום איפוס Azure:"), 1, 0)
+        limits_grid.addWidget(self.reset_day_azure_spin, 1, 1)
+
+        self.reset_day_gemini_spin = QSpinBox()
+        self.reset_day_gemini_spin.setRange(1, 31)
+        self.reset_day_gemini_spin.setValue(getattr(self.settings, "reset_day_gemini", 1))
+        self.reset_day_gemini_spin.setToolTip("היום בחודש בו Gemini מתאפס (1-31)")
+        limits_grid.addWidget(QLabel("יום איפוס Gemini:"), 1, 2)
+        limits_grid.addWidget(self.reset_day_gemini_spin, 1, 3)
+
+        self.reset_day_elevenlabs_spin = QSpinBox()
+        self.reset_day_elevenlabs_spin.setRange(1, 31)
+        self.reset_day_elevenlabs_spin.setValue(getattr(self.settings, "reset_day_elevenlabs", 1))
+        self.reset_day_elevenlabs_spin.setToolTip("היום בחודש בו ElevenLabs מתאפס (1-31)")
+        limits_grid.addWidget(QLabel("יום איפוס ElevenLabs:"), 1, 4)
+        limits_grid.addWidget(self.reset_day_elevenlabs_spin, 1, 5)
         
         save_btn = QPushButton("שמור מגבלות")
         save_btn.clicked.connect(self._save_limits)
-        limits_row.addWidget(save_btn)
-        limits_row.addStretch(1)
-        layout.addLayout(limits_row)
+        limits_grid.addWidget(save_btn, 0, 6, 2, 1)
+        limits_grid.setColumnStretch(6, 1)
+        layout.addLayout(limits_grid)
         
         # Recent Runs Table
         layout.addWidget(self._section_label("היסטוריית הרצות (30 אחרונות)"))
         self.history_table = self._create_history_table()
+        self.history_table.setMinimumHeight(260)
         layout.addWidget(self.history_table, 1)
         
         return tab
@@ -253,9 +289,22 @@ class CostCenterDialog(QDialog):
         """Create the budget summary table."""
         table = QTableWidget()
         table.setStyleSheet(TABLE_STYLE)
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["שירות", "שימוש", "עלות", "תקציב", "סטטוס"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.setColumnCount(8)
+        table.setHorizontalHeaderLabels([
+            "שירות",
+            "שימוש",
+            "עלות",
+            "תקציב",
+            "יום איפוס",
+            "ימים לסיום",
+            "התקדמות מחזור",
+            "סטטוס",
+        ])
+        table.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -263,22 +312,21 @@ class CostCenterDialog(QDialog):
         table.setMaximumHeight(180)
         return table
 
-    def _create_history_table(self) -> QTableWidget:
-        """Create the history table."""
-        table = QTableWidget()
-        table.setStyleSheet(TABLE_STYLE)
-        table.setColumnCount(6)
-        table.setHorizontalHeaderLabels([
+    def _create_history_table(self) -> QTreeWidget:
+        """Create the grouped history tree."""
+        tree = QTreeWidget()
+        tree.setStyleSheet(TABLE_STYLE)
+        tree.setColumnCount(6)
+        tree.setHeaderLabels([
             "תאריך", "נושא", "עלות AI", "עלות TTS", "ספק TTS", "סה״כ"
         ])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        table.verticalHeader().setVisible(False)
-        table.setAlternatingRowColors(True)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setSortingEnabled(True)
-        return table
+        tree.setRootIsDecorated(True)
+        tree.setAlternatingRowColors(True)
+        tree.setSortingEnabled(False)
+        tree.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        return tree
 
     def _build_charts_tab(self) -> QWidget:
         """Build the charts tab content."""
@@ -442,30 +490,147 @@ class CostCenterDialog(QDialog):
         self._fill_history_table()
         self._refresh_chart()
 
+    def _render_budget_row(self, row_idx: int, row: ProviderBudget) -> None:
+        """Render a single provider budget row with consistent styling."""
+        self.budget_table.setItem(row_idx, 0, QTableWidgetItem(row.service))
+        self.budget_table.setItem(row_idx, 1, QTableWidgetItem(row.usage))
+        self.budget_table.setItem(row_idx, 2, QTableWidgetItem(row.cost))
+        self.budget_table.setItem(row_idx, 3, QTableWidgetItem(row.budget))
+
+        reset_item = QTableWidgetItem(str(row.reset_day))
+        reset_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.budget_table.setItem(row_idx, 4, reset_item)
+
+        days_item = QTableWidgetItem(str(row.days_left))
+        days_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if row.days_left < 3:
+            days_item.setForeground(QColor("#ef4444"))
+        self.budget_table.setItem(row_idx, 5, days_item)
+
+        progress_widget = QWidget()
+        progress_widget.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        progress_layout = QHBoxLayout(progress_widget)
+        progress_layout.setContentsMargins(4, 0, 4, 0)
+        progress_layout.setSpacing(6)
+        cycle_progress = QProgressBar()
+        cycle_progress.setRange(0, 100)
+        cycle_progress.setValue(int(row.time_pct))
+        cycle_progress.setFormat(f"עוד {row.days_left} ימים לאיפוס")
+        cycle_progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cycle_progress.setMinimumWidth(140)
+        progress_layout.addWidget(cycle_progress)
+        self.budget_table.setCellWidget(row_idx, 6, progress_widget)
+
+        status_item = QTableWidgetItem()
+        budget_pct = row.pct
+        safe_icon = row.time_pct >= 90 and budget_pct < 20
+        if safe_icon:
+            status_item.setText("✅ Safe")
+            status_item.setForeground(QColor("#22c55e"))
+        else:
+            status_item.setText(f"{budget_pct:.0f}%")
+            if budget_pct >= 90:
+                status_item.setForeground(QColor("#ef4444"))
+            elif budget_pct >= 70:
+                status_item.setForeground(QColor("#f97316"))
+            else:
+                status_item.setForeground(QColor("#22c55e"))
+        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if budget_pct >= 90 and row.days_left > 5:
+            font = status_item.font()
+            font.setBold(True)
+            status_item.setFont(font)
+            days_item.setForeground(QColor("#ef4444"))
+            days_font = days_item.font()
+            days_font.setBold(True)
+            days_item.setFont(days_font)
+        self.budget_table.setItem(row_idx, 7, status_item)
+
     def _fill_budget_table(self) -> None:
         """Fill the budget summary table."""
         totals = self.cost_totals if isinstance(self.cost_totals, dict) else {}
+        entries = self.history.all() or []
+        today_utc = datetime.now(timezone.utc).date()
+
         openai_limit = max(self.settings.monthly_openai_cost_limit, 0.01)
         tts_limit = max(float(self.settings.monthly_tts_character_limit), 1.0)
-        elevenlabs_limit = max(
-            float(getattr(self.settings, 'monthly_elevenlabs_character_limit', 100000)), 1.0
+        elevenlabs_limit = max(float(getattr(self.settings, "monthly_elevenlabs_character_limit", 100000)), 1.0)
+        google_ai_limit = max(float(getattr(self.settings, "monthly_google_ai_limit", 50.0)), 0.01)
+
+        def _clamp_day(val: int) -> int:
+            try:
+                return max(1, min(31, int(val)))
+            except Exception:
+                return 1
+
+        def _parse_entry_date(entry: Dict) -> Optional[datetime]:
+            """Parse entry date and normalize to UTC-aware datetime."""
+            date_str = entry.get("timestamp") or entry.get("date") or ""
+            if not date_str:
+                return None
+            dt: Optional[datetime] = None
+            try:
+                dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            except Exception:
+                try:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                except Exception:
+                    dt = None
+            if dt is None:
+                return None
+            if dt.tzinfo:
+                return dt.astimezone(timezone.utc)
+            return dt.replace(tzinfo=timezone.utc)
+
+        def _aggregate_since(start_dt: datetime) -> Dict[str, float]:
+            totals_inner: Dict[str, float] = {}
+            start_cmp = start_dt if start_dt.tzinfo else start_dt.replace(tzinfo=timezone.utc)
+            for entry in entries:
+                dt = _parse_entry_date(entry)
+                if dt and dt.tzinfo:
+                    dt = dt.astimezone(timezone.utc)
+                if dt and dt < start_cmp:
+                    continue
+                costs = entry.get("costs") or {}
+                if not isinstance(costs, dict):
+                    continue
+                for key, value in costs.items():
+                    if isinstance(value, (int, float)):
+                        totals_inner[key] = totals_inner.get(key, 0.0) + float(value)
+            return totals_inner
+
+        def _cycle_window(reset_day: int) -> Tuple[datetime, date, int, float]:
+            """Return (start_dt, next_reset_date, days_left, time_pct)."""
+            start_dt = get_cycle_start_date(reset_day, today_utc)
+            safe_day = _clamp_day(reset_day)
+            if today_utc.day >= safe_day:
+                year = today_utc.year + (1 if today_utc.month == 12 else 0)
+                month = 1 if today_utc.month == 12 else today_utc.month + 1
+            else:
+                year = today_utc.year
+                month = today_utc.month
+            day = min(safe_day, calendar.monthrange(year, month)[1])
+            next_reset_dt = datetime(year, month, day, tzinfo=timezone.utc)
+            next_reset_date = next_reset_dt.date()
+            days_left = max(0, (next_reset_date - today_utc).days)
+            cycle_len = max(1, (next_reset_date - start_dt.date()).days or 1)
+            elapsed_days = min(cycle_len, cycle_len - days_left)
+            time_pct = min(100.0, max(0.0, (elapsed_days / cycle_len) * 100))
+            return start_dt, next_reset_date, days_left, time_pct
+
+        azure_start, azure_next, azure_days_left, azure_time_pct = _cycle_window(
+            getattr(self.settings, "reset_day_azure", getattr(self.settings, "budget_reset_day", 14))
+        )
+        gemini_start, gemini_next, gemini_days_left, gemini_time_pct = _cycle_window(
+            getattr(self.settings, "reset_day_gemini", 1)
+        )
+        eleven_start, eleven_next, eleven_days_left, eleven_time_pct = _cycle_window(
+            getattr(self.settings, "reset_day_elevenlabs", 1)
         )
 
-        reset_day = max(1, min(31, int(getattr(self.settings, "budget_reset_day", 1) or 1)))
-        today = datetime.now().date()
-        if today.day >= reset_day:
-            cycle_year, cycle_month = today.year, today.month
-        else:
-            if today.month == 1:
-                cycle_year, cycle_month = today.year - 1, 12
-            else:
-                cycle_year, cycle_month = today.year, today.month - 1
-        start_day = min(reset_day, calendar.monthrange(cycle_year, cycle_month)[1])
-        start_of_cycle = datetime(cycle_year, cycle_month, start_day)
-
-        mtd_totals = self.history.get_costs_since(start_of_cycle) or {}
-        if not isinstance(mtd_totals, dict):
-            mtd_totals = {}
+        azure_cycle = _aggregate_since(azure_start)
+        gemini_cycle = _aggregate_since(gemini_start)
+        eleven_cycle = _aggregate_since(eleven_start)
 
         def _as_int(val: object) -> int:
             try:
@@ -479,126 +644,215 @@ class CostCenterDialog(QDialog):
             except (TypeError, ValueError):
                 return 0.0
 
-        # Core AI costs and usage
-        mtd_openai = _as_float(mtd_totals.get("openai_cost_usd", mtd_totals.get("total_cost_usd", 0.0)))
+        # Azure / OpenAI text
+        cycle_openai_cost = _as_float(azure_cycle.get("openai_cost_usd", azure_cycle.get("total_cost_usd", 0.0)))
         total_openai = _as_float(totals.get("openai_cost_usd", totals.get("total_cost_usd", 0.0)))
-        mtd_tokens = _as_int(mtd_totals.get("prompt_tokens", 0)) + _as_int(mtd_totals.get("completion_tokens", 0))
+        cycle_tokens = _as_int(azure_cycle.get("prompt_tokens", 0)) + _as_int(azure_cycle.get("completion_tokens", 0))
         total_tokens = _as_int(totals.get("prompt_tokens", 0)) + _as_int(totals.get("completion_tokens", 0))
+        ai_pct = min(100.0, (cycle_openai_cost / openai_limit) * 100 if openai_limit else 0.0)
 
-        # TTS usage
-        azure_tts_chars = _as_int(totals.get("tts_characters", 0))
-        mtd_azure_tts_chars = _as_int(mtd_totals.get("tts_characters", 0))
-        azure_tts_cost_total = _as_float(totals.get("azure_tts_cost_usd", azure_tts_chars * AZURE_TTS_COST_PER_THOUSAND / 1000))
-        azure_tts_cost_mtd = _as_float(mtd_totals.get("azure_tts_cost_usd", mtd_azure_tts_chars * AZURE_TTS_COST_PER_THOUSAND / 1000))
+        # Azure TTS
+        cycle_azure_tts_chars = _as_int(azure_cycle.get("tts_characters", 0))
+        cycle_azure_tts_cost = _as_float(
+            azure_cycle.get("azure_tts_cost_usd", cycle_azure_tts_chars * AZURE_TTS_COST_PER_THOUSAND / 1000)
+        )
+        total_azure_tts_chars = _as_int(totals.get("tts_characters", 0))
+        total_azure_tts_cost = _as_float(
+            totals.get("azure_tts_cost_usd", total_azure_tts_chars * AZURE_TTS_COST_PER_THOUSAND / 1000)
+        )
+        azure_tts_pct = min(100.0, (cycle_azure_tts_chars / tts_limit) * 100 if tts_limit else 0.0)
 
-        elevenlabs_chars = _as_int(totals.get("elevenlabs_characters", 0))
-        mtd_elevenlabs_chars = _as_int(mtd_totals.get("elevenlabs_characters", 0))
-        elevenlabs_cost_total = _as_float(totals.get("elevenlabs_tts_cost_usd", elevenlabs_chars * ELEVENLABS_COST_PER_THOUSAND / 1000))
-        elevenlabs_cost_mtd = _as_float(mtd_totals.get("elevenlabs_tts_cost_usd", mtd_elevenlabs_chars * ELEVENLABS_COST_PER_THOUSAND / 1000))
+        # ElevenLabs TTS
+        cycle_eleven_chars = _as_int(eleven_cycle.get("elevenlabs_characters", 0))
+        cycle_eleven_cost = _as_float(
+            eleven_cycle.get("elevenlabs_tts_cost_usd", cycle_eleven_chars * ELEVENLABS_COST_PER_THOUSAND / 1000)
+        )
+        total_eleven_chars = _as_int(totals.get("elevenlabs_characters", 0))
+        total_eleven_cost = _as_float(
+            totals.get("elevenlabs_tts_cost_usd", total_eleven_chars * ELEVENLABS_COST_PER_THOUSAND / 1000)
+        )
+        elevenlabs_pct = min(100.0, (cycle_eleven_chars / elevenlabs_limit) * 100 if elevenlabs_limit else 0.0)
 
-        # Google AI visuals usage
-        imagen_images_total = _as_int(totals.get("imagen_images", 0))
-        imagen_images_mtd = _as_int(mtd_totals.get("imagen_images", 0))
-        imagen_cost_total = _as_float(totals.get("imagen_cost_usd", imagen_images_total * IMAGEN_COST_PER_IMAGE))
-        imagen_cost_mtd = _as_float(mtd_totals.get("imagen_cost_usd", imagen_images_mtd * IMAGEN_COST_PER_IMAGE))
+        # Google AI visuals (Imagen + VEO) treated as Gemini cycle
+        imagen_cycle_cost = _as_float(gemini_cycle.get("imagen_cost_usd", 0.0))
+        veo_cycle_cost = _as_float(gemini_cycle.get("veo_cost_usd", 0.0))
+        visual_cycle_cost = _as_float(gemini_cycle.get("visual_cost_usd", imagen_cycle_cost + veo_cycle_cost))
+        imagen_cycle_images = _as_int(gemini_cycle.get("imagen_images", 0))
+        veo_cycle_seconds = _as_float(gemini_cycle.get("veo_seconds", 0.0))
 
-        veo_seconds_total = _as_float(totals.get("veo_seconds", 0))
-        veo_seconds_mtd = _as_float(mtd_totals.get("veo_seconds", 0))
-        veo_cost_total = _as_float(totals.get("veo_cost_usd", veo_seconds_total * VEO_COST_PER_SECOND))
-        veo_cost_mtd = _as_float(mtd_totals.get("veo_cost_usd", veo_seconds_mtd * VEO_COST_PER_SECOND))
+        imagen_total_cost = _as_float(totals.get("imagen_cost_usd", 0.0))
+        veo_total_cost = _as_float(totals.get("veo_cost_usd", 0.0))
+        visual_total_cost = _as_float(totals.get("visual_cost_usd", imagen_total_cost + veo_total_cost))
+        imagen_total_images = _as_int(totals.get("imagen_images", 0))
+        veo_total_seconds = _as_float(totals.get("veo_seconds", 0.0))
 
-        google_ai_cost_total = imagen_cost_total + veo_cost_total
-        google_ai_cost_mtd = imagen_cost_mtd + veo_cost_mtd
-        google_ai_limit = max(float(getattr(self.settings, 'monthly_google_ai_limit', 50.0)), 0.01)
+        google_ai_cycle_cost = imagen_cycle_cost + veo_cycle_cost if visual_cycle_cost == 0 else visual_cycle_cost
+        google_ai_total_cost = imagen_total_cost + veo_total_cost if visual_total_cost == 0 else visual_total_cost
+        google_ai_pct = min(100.0, (google_ai_cycle_cost / google_ai_limit) * 100 if google_ai_limit else 0.0)
 
-        # Calculate percentages (Month-to-Date vs limits)
-        ai_pct = min(100, (mtd_openai / openai_limit) * 100)
-        azure_tts_pct = min(100, (mtd_azure_tts_chars / tts_limit) * 100)
-        elevenlabs_pct = min(100, (mtd_elevenlabs_chars / elevenlabs_limit) * 100)
-        google_ai_pct = min(100, (google_ai_cost_mtd / google_ai_limit) * 100)
-
-        rows = [
-            (
-                "מוח AI (טקסט)",
-                f'חודש נוכחי: {mtd_tokens:,} טוקנים | סה"כ: {total_tokens:,} טוקנים',
-                f'MTD: ${mtd_openai:.2f} | סה"כ: ${total_openai:.2f}',
-                f'${openai_limit:.0f}',
-                ai_pct,
+        rows: List[ProviderBudget] = [
+            ProviderBudget(
+                service="מוח AI (טקסט)",
+                usage=f'מחזור: {cycle_tokens:,} טוקנים | סה"כ: {total_tokens:,} טוקנים',
+                cost=f'מחזור: ${cycle_openai_cost:.2f} | סה"כ: ${total_openai:.2f}',
+                budget=f'${openai_limit:.0f}',
+                pct=ai_pct,
+                reset_day=_clamp_day(getattr(self.settings, "reset_day_azure", 14)),
+                days_left=azure_days_left,
+                time_pct=azure_time_pct,
             ),
-            (
-                "יצירת קול (Speech) - Azure",
-                f'חודש נוכחי: {mtd_azure_tts_chars:,} תווים | סה"כ: {azure_tts_chars:,} תווים',
-                f'MTD: ${azure_tts_cost_mtd:.2f} | סה"כ: ${azure_tts_cost_total:.2f}',
-                f'{int(tts_limit):,} תווים',
-                azure_tts_pct,
+            ProviderBudget(
+                service="יצירת קול (Speech) - Azure",
+                usage=f'מחזור: {cycle_azure_tts_chars:,} תווים | סה"כ: {total_azure_tts_chars:,} תווים',
+                cost=f'מחזור: ${cycle_azure_tts_cost:.2f} | סה"כ: ${total_azure_tts_cost:.2f}',
+                budget=f'{int(tts_limit):,} תווים',
+                pct=azure_tts_pct,
+                reset_day=_clamp_day(getattr(self.settings, "reset_day_azure", 14)),
+                days_left=azure_days_left,
+                time_pct=azure_time_pct,
             ),
-            (
-                "יצירת קול (Speech) - ElevenLabs",
-                f'חודש נוכחי: {mtd_elevenlabs_chars:,} תווים | סה"כ: {elevenlabs_chars:,} תווים',
-                f'MTD: ${elevenlabs_cost_mtd:.2f} | סה"כ: ${elevenlabs_cost_total:.2f}',
-                f'{int(elevenlabs_limit):,} תווים',
-                elevenlabs_pct,
+            ProviderBudget(
+                service="יצירת קול (Speech) - ElevenLabs",
+                usage=f'מחזור: {cycle_eleven_chars:,} תווים | סה"כ: {total_eleven_chars:,} תווים',
+                cost=f'מחזור: ${cycle_eleven_cost:.2f} | סה"כ: ${total_eleven_cost:.2f}',
+                budget=f'{int(elevenlabs_limit):,} תווים',
+                pct=elevenlabs_pct,
+                reset_day=_clamp_day(getattr(self.settings, "reset_day_elevenlabs", 1)),
+                days_left=eleven_days_left,
+                time_pct=eleven_time_pct,
             ),
-            (
-                "Google AI (Imagen + VEO)",
-                f'Imagen: {imagen_images_mtd} / {imagen_images_total} | VEO: {veo_seconds_mtd:.1f}s / {veo_seconds_total:.1f}s',
-                f'MTD: ${google_ai_cost_mtd:.2f} | סה"כ: ${google_ai_cost_total:.2f}',
-                f'${google_ai_limit:.0f}',
-                google_ai_pct,
+            ProviderBudget(
+                service="Google AI (Imagen + VEO)",
+                usage=f'Imagen: {imagen_cycle_images} / {imagen_total_images} | VEO: {veo_cycle_seconds:.1f}s / {veo_total_seconds:.1f}s',
+                cost=f'מחזור: ${google_ai_cycle_cost:.2f} | סה"כ: ${google_ai_total_cost:.2f}',
+                budget=f'${google_ai_limit:.0f}',
+                pct=google_ai_pct,
+                reset_day=_clamp_day(getattr(self.settings, "reset_day_gemini", 1)),
+                days_left=gemini_days_left,
+                time_pct=gemini_time_pct,
             ),
         ]
-        
+
         self.budget_table.setRowCount(len(rows))
-        for row_idx, (service, usage, cost, budget, pct) in enumerate(rows):
-            self.budget_table.setItem(row_idx, 0, QTableWidgetItem(service))
-            self.budget_table.setItem(row_idx, 1, QTableWidgetItem(usage))
-            self.budget_table.setItem(row_idx, 2, QTableWidgetItem(cost))
-            self.budget_table.setItem(row_idx, 3, QTableWidgetItem(budget))
-            
-            # Status with color coding
-            status_item = QTableWidgetItem(f'{pct:.0f}%')
-            if pct >= 90:
-                status_item.setForeground(QColor("#ef4444"))  # Red
-            elif pct >= 70:
-                status_item.setForeground(QColor("#f97316"))  # Orange
-            else:
-                status_item.setForeground(QColor("#22c55e"))  # Green
-            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.budget_table.setItem(row_idx, 4, status_item)
+        for row_idx, row in enumerate(rows):
+            self._render_budget_row(row_idx, row)
 
     def _fill_history_table(self) -> None:
-        """Fill the history table with recent runs."""
+        """Fill the history tree grouped by month."""
         entries_raw = self.history.all() or []
-        entries = entries_raw[:30] if isinstance(entries_raw, list) else []
-        self.history_table.setRowCount(len(entries))
-        
-        for row_idx, entry in enumerate(entries):
+        entries = entries_raw if isinstance(entries_raw, list) else []
+        was_sorting = self.history_table.isSortingEnabled()
+        self.history_table.setSortingEnabled(False)
+        self.history_table.setUpdatesEnabled(False)
+        self.history_table.clear()
+        self.history_table.setColumnCount(6)
+        self.history_table.setHeaderLabels([
+            "תאריך", "נושא", "עלות AI", "עלות TTS", "ספק TTS", "סה״כ"
+        ])
+
+        months_he = [
+            "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
+            "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"
+        ]
+
+        def _parse_date(entry: Dict) -> datetime:
+            date_str = entry.get("timestamp") or entry.get("date") or ""
+            try:
+                return datetime.fromisoformat(date_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+            except Exception:
+                try:
+                    return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                except Exception:
+                    return datetime.now(timezone.utc)
+
+        def _as_float(val: object) -> float:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        grouped: Dict[Tuple[int, int], List[Dict]] = {}
+        for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            date_str = entry.get("date", "")
-            topic = entry.get("topic", "לא ידוע")[:30]
-            costs = entry.get("costs") or {}
-            
-            ai_cost = costs.get("openai_cost_usd", 0)
-            azure_tts = costs.get("azure_tts_cost_usd", costs.get("tts_cost_usd", 0))
-            elevenlabs_tts = costs.get("elevenlabs_tts_cost_usd", 0)
-            tts_cost = azure_tts + elevenlabs_tts
-            total = costs.get("total_cost_usd", ai_cost + tts_cost)
-            
-            # Determine TTS provider used
-            tts_provider = "Azure"
-            if elevenlabs_tts > 0:
-                tts_provider = "ElevenLabs" if azure_tts == 0 else "Mixed"
-            
-            self.history_table.setItem(row_idx, 0, QTableWidgetItem(date_str))
-            self.history_table.setItem(row_idx, 1, QTableWidgetItem(topic))
-            self.history_table.setItem(row_idx, 2, QTableWidgetItem(f'${ai_cost:.3f}'))
-            self.history_table.setItem(row_idx, 3, QTableWidgetItem(f'${tts_cost:.3f}'))
-            self.history_table.setItem(row_idx, 4, QTableWidgetItem(tts_provider))
-            
-            total_item = QTableWidgetItem(f'${total:.3f}')
-            total_item.setForeground(QColor("#22c55e"))
-            self.history_table.setItem(row_idx, 5, total_item)
+            dt = _parse_date(entry)
+            grouped.setdefault((dt.year, dt.month), []).append(entry)
+
+        if not grouped:
+            empty = QTreeWidgetItem(self.history_table)
+            empty.setText(0, "אין נתוני היסטוריה זמינים")
+            empty_font = empty.font(0)
+            empty_font.setBold(True)
+            empty.setFont(0, empty_font)
+            self.history_table.setUpdatesEnabled(True)
+            self.history_table.setSortingEnabled(was_sorting)
+            return
+
+        for key in sorted(grouped.keys(), reverse=True):
+            year, month = key
+            month_entries = grouped[key]
+            month_name = months_he[month - 1] if 1 <= month <= 12 else str(month)
+
+            month_ai = sum(_as_float(e.get("costs", {}).get("openai_cost_usd", 0.0)) for e in month_entries)
+            month_azure_tts = sum(_as_float(e.get("costs", {}).get("azure_tts_cost_usd", e.get("costs", {}).get("tts_cost_usd", 0.0))) for e in month_entries)
+            month_eleven = sum(_as_float(e.get("costs", {}).get("elevenlabs_tts_cost_usd", 0.0)) for e in month_entries)
+            month_tts = month_azure_tts + month_eleven
+            month_total = sum(_as_float(e.get("costs", {}).get("total_cost_usd", _as_float(e.get("costs", {}).get("openai_cost_usd", 0.0)) + _as_float(e.get("costs", {}).get("azure_tts_cost_usd", 0.0)) + _as_float(e.get("costs", {}).get("elevenlabs_tts_cost_usd", 0.0)))) for e in month_entries)
+
+            parent = QTreeWidgetItem(self.history_table)
+            parent.setText(0, f"{month_name} {year}")
+            parent.setText(1, "סה\"כ חודשי")
+            parent.setText(5, f"${month_total:.3f}")
+            font_parent = parent.font(0)
+            font_parent.setBold(True)
+            parent.setFont(0, font_parent)
+            parent.setFont(1, font_parent)
+            parent.setFont(5, font_parent)
+            parent.setForeground(5, QColor("#22c55e"))
+            parent.setExpanded(True)
+
+            # Sort entries newest first
+            month_entries_sorted = sorted(month_entries, key=_parse_date, reverse=True)
+            for entry in month_entries_sorted:
+                date_obj = _parse_date(entry)
+                date_str = date_obj.strftime("%Y-%m-%d")
+                topic = entry.get("topic", "לא ידוע")[:30]
+                costs = entry.get("costs") or {}
+                if not isinstance(costs, dict):
+                    costs = {}
+
+                ai_cost = _as_float(costs.get("openai_cost_usd", 0))
+                azure_tts = _as_float(costs.get("azure_tts_cost_usd", costs.get("tts_cost_usd", 0)))
+                elevenlabs_tts = _as_float(costs.get("elevenlabs_tts_cost_usd", 0))
+                tts_cost = azure_tts + elevenlabs_tts
+                total = _as_float(costs.get("total_cost_usd", ai_cost + tts_cost))
+
+                tts_provider = "Azure"
+                if elevenlabs_tts > 0:
+                    tts_provider = "ElevenLabs" if azure_tts == 0 else "Mixed"
+
+                child = QTreeWidgetItem(parent)
+                child.setText(0, date_str)
+                child.setText(1, topic)
+                child.setText(2, f'${ai_cost:.3f}')
+                child.setText(3, f'${tts_cost:.3f}')
+                child.setText(4, tts_provider)
+                child.setText(5, f'${total:.3f}')
+                child.setTextAlignment(2, Qt.AlignmentFlag.AlignCenter)
+                child.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter)
+                child.setTextAlignment(5, Qt.AlignmentFlag.AlignCenter)
+
+            # Monthly total row
+            total_row = QTreeWidgetItem(parent)
+            total_row.setText(0, "סה\"כ חודשי")
+            total_row.setText(2, f'${month_ai:.3f}')
+            total_row.setText(3, f'${month_tts:.3f}')
+            total_row.setText(5, f'${month_total:.3f}')
+            total_row.setForeground(2, QColor("#38bdf8"))
+            total_row.setForeground(3, QColor("#a78bfa"))
+            total_row.setForeground(5, QColor("#22c55e"))
+        self.history_table.setUpdatesEnabled(True)
+        self.history_table.setSortingEnabled(was_sorting)
 
     def _refresh_chart(self) -> None:
         """Refresh the analytics chart."""
@@ -635,7 +889,12 @@ class CostCenterDialog(QDialog):
             curve.setBrush(fill_color)
             
             axis = self.chart.getAxis("bottom")
-            axis.setTicks([[(i, labels[i]) for i in range(len(labels))]])
+            max_labels = 10
+            step = max(1, len(labels) // max_labels)
+            ticks = [(i, labels[i]) for i in range(0, len(labels), step)]
+            if ticks and ticks[-1][0] != len(labels) - 1:
+                ticks.append((len(labels) - 1, labels[-1]))
+            axis.setTicks([ticks])
         except Exception:
             # Fall back to placeholder if plotting fails due to bad data
             self.chart.clear()
@@ -657,10 +916,25 @@ class CostCenterDialog(QDialog):
     ) -> Tuple[List[int], List[float], List[str]]:
         """Build time series data for the chart."""
         entries_raw = self.history.all() or []
-        entries = entries_raw[:30] if isinstance(entries_raw, list) else []
-        if not entries:
+        if not isinstance(entries_raw, list):
             return [], [], []
-        
+
+        def _parse_dt(entry: Dict) -> datetime:
+            date_str = entry.get("timestamp") or entry.get("date") or ""
+            try:
+                return datetime.fromisoformat(date_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+            except Exception:
+                try:
+                    return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                except Exception:
+                    return datetime.now(timezone.utc)
+
+        dated_entries: List[Tuple[datetime, Dict]] = [(_parse_dt(e), e) for e in entries_raw if isinstance(e, dict)]
+        dated_entries.sort(key=lambda pair: pair[0])  # chronological
+        dated_entries = dated_entries[-30:]  # keep last 30 chronologically
+        if not dated_entries:
+            return [], [], []
+
         x_vals: List[int] = []
         y_vals: List[float] = []
         labels: List[str] = []
@@ -677,15 +951,7 @@ class CostCenterDialog(QDialog):
             except (TypeError, ValueError):
                 return 0
 
-        for idx, entry in enumerate(reversed(entries)):
-            if not isinstance(entry, dict):
-                continue
-            date_str = entry.get("date") or ""
-            try:
-                date_obj = datetime.fromisoformat(date_str)
-            except ValueError:
-                date_obj = datetime.utcnow()
-            
+        for idx, (date_obj, entry) in enumerate(dated_entries):
             costs = entry.get("costs") or {}
             if not isinstance(costs, dict):
                 costs = {}
@@ -705,7 +971,7 @@ class CostCenterDialog(QDialog):
             pos = len(x_vals)
             x_vals.append(pos)
             y_vals.append(value)
-            labels.append(date_obj.strftime("%m-%d"))
+            labels.append(date_obj.strftime("%y-%m-%d"))
         
         return x_vals, y_vals, labels
 
@@ -755,12 +1021,19 @@ class CostCenterDialog(QDialog):
         self.settings.monthly_openai_cost_limit = float(self.openai_spin.value())
         self.settings.monthly_tts_character_limit = int(self.tts_spin.value())
         self.settings.monthly_elevenlabs_character_limit = int(self.elevenlabs_spin.value())
-        self.settings.budget_reset_day = int(self.reset_day_spin.value())
+        self.settings.reset_day_azure = int(self.reset_day_azure_spin.value())
+        self.settings.reset_day_gemini = int(self.reset_day_gemini_spin.value())
+        self.settings.reset_day_elevenlabs = int(self.reset_day_elevenlabs_spin.value())
+        # Maintain legacy budget_reset_day for backward compatibility
+        self.settings.budget_reset_day = self.settings.reset_day_azure
 
         try:
             self.settings.save_ui_preferences(
                 {
                     "budget_reset_day": self.settings.budget_reset_day,
+                    "reset_day_azure": self.settings.reset_day_azure,
+                    "reset_day_gemini": self.settings.reset_day_gemini,
+                    "reset_day_elevenlabs": self.settings.reset_day_elevenlabs,
                     "monthly_openai_cost_limit": self.settings.monthly_openai_cost_limit,
                     "monthly_tts_character_limit": self.settings.monthly_tts_character_limit,
                     "monthly_elevenlabs_character_limit": self.settings.monthly_elevenlabs_character_limit,
