@@ -25,11 +25,13 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
     QProgressBar,
+    QSizePolicy,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -160,7 +162,7 @@ class CostCenterDialog(QDialog):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         # Friendlier default size that fits on smaller screens, still resizable
         self.resize(820, 600)
-        self.setMinimumHeight(420)
+        self.setMinimumHeight(320)
         self.setMinimumWidth(560)
         self.setSizeGripEnabled(True)
 
@@ -174,6 +176,15 @@ class CostCenterDialog(QDialog):
         title = QLabel("מרכז עלויות וניתוח")
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #22c55e;")
         main_layout.addWidget(title)
+        
+        # Body wrapped in scroll area so dialog can shrink vertically
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(12)
         
         # Tabs
         self.tabs = QTabWidget()
@@ -207,10 +218,14 @@ class CostCenterDialog(QDialog):
         # Tab 2: Charts
         self.tabs.addTab(self._build_charts_tab(), "גרפים וניתוח")
         
-        main_layout.addWidget(self.tabs, 1)
+        scroll_layout.addWidget(self.tabs, 1)
         
         # Calculator section (always visible)
-        main_layout.addWidget(self._build_calculator())
+        scroll_layout.addWidget(self._build_calculator())
+        scroll_layout.addStretch(1)
+        
+        scroll_area.setWidget(scroll_widget)
+        main_layout.addWidget(scroll_area, 1)
 
     def _build_tables_tab(self) -> QWidget:
         """Build the tables tab content."""
@@ -282,7 +297,8 @@ class CostCenterDialog(QDialog):
         # Recent Runs Table
         layout.addWidget(self._section_label("היסטוריית הרצות (30 אחרונות)"))
         self.history_table = self._create_history_table()
-        self.history_table.setMinimumHeight(260)
+        # Lower minimum to allow dialog to shrink on shorter screens
+        self.history_table.setMinimumHeight(140)
         layout.addWidget(self.history_table, 1)
         
         return tab
@@ -352,7 +368,8 @@ class CostCenterDialog(QDialog):
         
         # Chart
         self.chart = PlotWidget(background="#0f172a")
-        self.chart.setMinimumHeight(250)
+        # Lower minimum to allow smaller dialog height
+        self.chart.setMinimumHeight(150)
         self.chart.showGrid(x=True, y=True, alpha=0.15)
         layout.addWidget(self.chart, 1)
         
@@ -399,6 +416,8 @@ class CostCenterDialog(QDialog):
                 padding: 0 8px;
             }
         """)
+        # Allow the calculator section to compress when the dialog is resized
+        calc_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         calc_layout = QGridLayout(calc_group)
         calc_layout.setSpacing(12)
 
