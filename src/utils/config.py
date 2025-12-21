@@ -39,6 +39,7 @@ class Settings:
 
     monthly_tts_character_limit: int = field(default_factory=lambda: int(os.getenv("MONTHLY_TTS_CHARACTER_LIMIT", "500000")))
     monthly_openai_cost_limit: float = field(default_factory=lambda: float(os.getenv("MONTHLY_OPENAI_COST_LIMIT", "200.0")))
+    budget_reset_day: int = field(default_factory=lambda: int(os.getenv("BUDGET_RESET_DAY", "1")))
     google_cloud_project: Optional[str] = field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_PROJECT"))
     google_cloud_location: str = field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
@@ -138,6 +139,8 @@ class Settings:
         # ElevenLabs API key is required only if using ElevenLabs TTS
         if self.default_tts_provider == "elevenlabs" and not self.elevenlabs_api_key:
             raise ValueError("ElevenLabs API key not configured. Set ELEVENLABS_API_KEY.")
+        # Ensure reset day is valid calendar day
+        self.budget_reset_day = max(1, min(31, int(getattr(self, "budget_reset_day", 1) or 1)))
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
         self._load_ui_preferences()
         self._normalize_imagen_model()
@@ -205,9 +208,9 @@ class Settings:
         VALID_VISUAL_GENERATORS = {"manim", "imagen", "imagen_manim", "veo", "hybrid"}
         # Accept a small, curated set of Imagen models and migrate deprecated ones
         VALID_IMAGEN_MODELS = {
-            "imagen-4.0-generate-001",
             "imagen-4.0-fast-generate-001",
-            "imagen-3.0-generate-001",
+            "imagen-4.0-generate-001",
+            "imagen-4.0-ultra-generate-001",
         }
         VALID_VEO_MODELS = {"veo-2.0-generate-001"}
         VALID_TTS_PROVIDERS = {"azure", "elevenlabs"}
@@ -237,6 +240,9 @@ class Settings:
             "azure_default_voice",
             "metadata_system_prompt",
             "visual_metadata_system_prompt",
+            "monthly_openai_cost_limit",
+            "monthly_tts_character_limit",
+            "monthly_elevenlabs_character_limit",
             "main_window_geometry",
             "main_window_state",
             "right_panel_width",
@@ -244,6 +250,7 @@ class Settings:
             "content_splitter_sizes",
             "output_mode",
             "include_visuals",
+            "budget_reset_day",
         ):
             if key in prefs:
                 value = prefs[key]
@@ -253,8 +260,8 @@ class Settings:
                     print(f"[Settings] Invalid visual_generator '{value}', using default 'manim'")
                     value = "manim"
                 elif key == "imagen_model":
-                    if value == "imagen-3.0-fast-generate-001":
-                        print("[Settings] Migrating deprecated imagen_model 'imagen-3.0-fast-generate-001' to 'imagen-4.0-generate-001'")
+                    if isinstance(value, str) and value.startswith("imagen-3."):
+                        print("[Settings] Migrating deprecated Imagen 3 selection to 'imagen-4.0-generate-001'")
                         value = "imagen-4.0-generate-001"
                     if value not in VALID_IMAGEN_MODELS:
                         print(f"[Settings] Invalid imagen_model '{value}', using default 'imagen-4.0-generate-001'")
@@ -268,6 +275,30 @@ class Settings:
                 elif key == "image_count":
                     # Ensure image_count is within valid range
                     value = max(1, min(20, int(value) if isinstance(value, (int, float)) else 5))
+                elif key == "budget_reset_day":
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        value = 1
+                    value = max(1, min(31, value))
+                elif key == "monthly_openai_cost_limit":
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        value = 200.0
+                    value = max(0.01, value)
+                elif key == "monthly_tts_character_limit":
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        value = 500000
+                    value = max(1000, value)
+                elif key == "monthly_elevenlabs_character_limit":
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        value = 100000
+                    value = max(1000, value)
                 elif key == "chat_font_size":
                     value = max(10, min(28, int(value) if isinstance(value, (int, float, str)) else 13))
                 elif key == "chat_banner_brightness":
@@ -360,6 +391,10 @@ class Settings:
             "content_splitter_sizes",
             "output_mode",
             "include_visuals",
+            "budget_reset_day",
+            "monthly_openai_cost_limit",
+            "monthly_tts_character_limit",
+            "monthly_elevenlabs_character_limit",
         }
         data = {key: payload[key] for key in payload if key in allowed}
         if not data:
@@ -396,20 +431,18 @@ class Settings:
         normalized = current
 
         lowered = str(current).lower()
-        if "fast" in lowered or lowered.startswith("imagen-3.0"):
+        if lowered.startswith("imagen-3."):
             print(
-                f"[Settings] Overriding imagen_model '{current}' to '{target}' to avoid provider 404 errors"
+                f"[Settings] Overriding deprecated Imagen 3 model '{current}' to '{target}'"
             )
             normalized = target
 
         if normalized not in {
-            "imagen-4.0-generate-001",
             "imagen-4.0-fast-generate-001",
-            "imagen-3.0-generate-001",
+            "imagen-4.0-generate-001",
+            "imagen-4.0-ultra-generate-001",
         }:
-            print(
-                f"[Settings] Invalid imagen_model '{current}', using '{target}'"
-            )
+            print(f"[Settings] Invalid imagen_model '{current}', using '{target}'")
             normalized = target
 
         setattr(self, "imagen_model", normalized)

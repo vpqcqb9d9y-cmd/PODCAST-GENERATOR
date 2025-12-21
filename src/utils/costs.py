@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict
 
+from src.utils.pricing import PRICING
+
 
 @dataclass
 class CostTracker:
@@ -25,10 +27,10 @@ class CostTracker:
     """
 
     # Cost rates (USD per 1K units)
-    openai_prompt_cost_per_1k: float = 0.0025  # GPT-4o mini
-    openai_completion_cost_per_1k: float = 0.01
-    azure_tts_cost_per_1k_chars: float = 0.016  # Azure Neural TTS
-    elevenlabs_cost_per_1k_chars: float = 0.30  # ElevenLabs standard
+    openai_prompt_cost_per_1k: float = PRICING.azure_gpt_input_per_1k
+    openai_completion_cost_per_1k: float = PRICING.azure_gpt_output_per_1k
+    azure_tts_cost_per_1k_chars: float = PRICING.azure_tts_per_1k_chars  # Azure Neural TTS
+    elevenlabs_cost_per_1k_chars: float = PRICING.elevenlabs_tts_per_1k_chars  # ElevenLabs standard
 
     # Usage counters
     prompt_tokens: int = 0

@@ -14,15 +14,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict
 
+from src.utils.pricing import PRICING
+
 # =============================================================================
 # Application Identity
 # =============================================================================
 
-APP_VERSION = "3.2.1"
+APP_VERSION = "3.4.0"
 """Current application version."""
 
-APP_BUILD_DATE = "2025-12-11"
-"""Build date for this version (v3.2.1 - Hotfix release)."""
+APP_BUILD_DATE = "2025-12-12"
+"""Build date for this version (v3.4.0)."""
 
 APP_DISPLAY_NAME = "M.B.S Studio"
 """The display name shown in window titles and UI elements."""
@@ -57,67 +59,67 @@ SYSTEM_CHAT_FONTS = [
 # Cost Calculation Constants
 # =============================================================================
 
-WORDS_PER_MINUTE = 150
+WORDS_PER_MINUTE = PRICING.words_per_minute
 """Average words spoken per minute for duration estimation."""
 
-TOKENS_PER_WORD = 1.3
+TOKENS_PER_WORD = PRICING.tokens_per_word
 """Average tokens per word for Hebrew/English mixed content."""
 
-OUTPUT_TOKEN_RATIO = 0.6
+OUTPUT_TOKEN_RATIO = PRICING.output_token_ratio
 """Ratio of output tokens to input tokens for cost estimation."""
 
-CHARS_PER_WORD = 4.5
+CHARS_PER_WORD = PRICING.chars_per_word
 """Average characters per word for TTS cost calculation."""
 
 # Azure OpenAI Pricing (per 1K tokens)
-AZURE_GPT_INPUT_COST = 0.005
+AZURE_GPT_INPUT_COST = PRICING.azure_gpt_input_per_1k
 """Azure GPT-4o input cost per 1,000 tokens (USD)."""
 
-AZURE_GPT_OUTPUT_COST = 0.015
+AZURE_GPT_OUTPUT_COST = PRICING.azure_gpt_output_per_1k
 """Azure GPT-4o output cost per 1,000 tokens (USD)."""
 
 # Google Gemini Pricing (per 1K tokens)
-GEMINI_INPUT_COST = 0.00035
+GEMINI_INPUT_COST = PRICING.gemini_input_per_1k
 """Gemini Flash input cost per 1,000 tokens (USD)."""
 
-GEMINI_OUTPUT_COST = 0.00105
+GEMINI_OUTPUT_COST = PRICING.gemini_output_per_1k
 """Gemini Flash output cost per 1,000 tokens (USD)."""
 
 # Azure Neural TTS Pricing
-TTS_COST_PER_MILLION = 16.0
+TTS_COST_PER_MILLION = PRICING.azure_tts_per_1k_chars * 1000
 """Azure Neural TTS cost per 1,000,000 characters (USD)."""
 
-AZURE_TTS_COST_PER_THOUSAND = 0.016
+AZURE_TTS_COST_PER_THOUSAND = PRICING.azure_tts_per_1k_chars
 """Azure Neural TTS cost per 1,000 characters (USD)."""
 
 # ElevenLabs TTS Pricing
-ELEVENLABS_COST_PER_THOUSAND = 0.30
+ELEVENLABS_COST_PER_THOUSAND = PRICING.elevenlabs_tts_per_1k_chars
 """ElevenLabs standard cost per 1,000 characters (USD)."""
 
 ELEVENLABS_TURBO_COST_PER_THOUSAND = 0.18
 """ElevenLabs Turbo model cost per 1,000 characters (USD)."""
 
-ELEVENLABS_COST_PER_MILLION = 300.0
+ELEVENLABS_COST_PER_MILLION = ELEVENLABS_COST_PER_THOUSAND * 1000
 """ElevenLabs cost per 1,000,000 characters (USD)."""
 
 # Google AI Visual Generation Pricing (Imagen 4 + VEO)
-IMAGEN_COST_PER_IMAGE = 0.04
-"""Imagen 4 standard cost per generated image (USD)."""
+IMAGEN_COST_PER_IMAGE = PRICING.imagen_per_image
+"""Imagen 4 Standard cost per generated image (USD)."""
 
 IMAGEN_ULTRA_COST_PER_IMAGE = 0.06
 """Imagen 4 Ultra cost per generated image (USD)."""
 
-IMAGEN_FAST_COST_PER_IMAGE = 0.02
+IMAGEN_FAST_COST_PER_IMAGE = 0.03
 """Imagen 4 Fast cost per generated image (USD)."""
 
-VEO_COST_PER_SECOND = 0.75
+VEO_COST_PER_SECOND = PRICING.veo_per_second
 """VEO video generation cost per second of output (USD)."""
 
 # Additional Production Costs
-VIDEO_OVERHEAD_COST = 0.25
+VIDEO_OVERHEAD_COST = PRICING.video_overhead
 """Estimated overhead cost for video rendering (USD)."""
 
-PPT_EXTRA_COST = 0.08
+PPT_EXTRA_COST = PRICING.ppt_extra
 """Estimated cost for PPTX/Story generation (USD)."""
 
 GOOGLE_AI_OVERHEAD_COST = 0.10
@@ -172,28 +174,23 @@ VISUAL_GENERATORS = {
 """Available visual generation backends with capabilities."""
 
 IMAGEN_MODELS = {
-    "imagen-4.0-generate-001": {
-        "name": "Imagen 4 (מומלץ) ⭐",
-        "description": "מודל Imagen 4 החדש - תומך ב-API הסטנדרטי",
-        "cost_per_image": 0.04,
-    },
     "imagen-4.0-fast-generate-001": {
         "name": "Imagen 4 Fast",
         "description": "גרסה מהירה של Imagen 4 לתצוגות מקדימות",
-        "cost_per_image": 0.03,
+        "cost_per_image": IMAGEN_FAST_COST_PER_IMAGE,
     },
-    "imagen-3.0-generate-001": {
-        "name": "Imagen 3 Standard",
-        "description": "מודל Imagen 3 סטנדרטי",
-        "cost_per_image": 0.04,
+    "imagen-4.0-generate-001": {
+        "name": "Imagen 4 (סטנדרטי) ⭐",
+        "description": "מודל Imagen 4 הסטנדרטי והמאוזן",
+        "cost_per_image": IMAGEN_COST_PER_IMAGE,
     },
-    "imagen-3.0-fast-generate-001": {
-        "name": "Imagen 3 Fast",
-        "description": "מודל מהיר לתצוגה מקדימה",
-        "cost_per_image": 0.02,
+    "imagen-4.0-ultra-generate-001": {
+        "name": "Imagen 4 Ultra (איכות גבוהה)",
+        "description": "איכות הגבוהה ביותר של Imagen 4",
+        "cost_per_image": IMAGEN_ULTRA_COST_PER_IMAGE,
     },
 }
-"""Available Imagen 3 models with pricing (via google-generativeai SDK)."""
+"""Available Imagen 4 models with pricing (via google-generativeai SDK)."""
 
 VEO_MODELS = {
     "veo-2.0-generate-001": {
@@ -601,4 +598,8 @@ DEFAULT_BRIGHTNESS = 0.85
 
 LOG_BUFFER_MAX_SIZE = 2000
 """Maximum number of log lines to keep in buffer."""
+
+# Budget & cost tracking defaults
+DEFAULT_BUDGET_RESET_DAY = 1
+"""Default monthly budget reset day (1 = first day of month)."""
 

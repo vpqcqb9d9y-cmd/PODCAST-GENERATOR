@@ -3108,6 +3108,22 @@ class PodcastGeneratorWindow(QMainWindow):
             )
             return
         
+        # Warn if metadata already exists to avoid accidental charges
+        existing_visual_meta = bool(
+            getattr(self, "_latest_visual_metadata", None)
+            or (getattr(self, "_latest_visual_metadata_path", None) and Path(self._latest_visual_metadata_path).exists())
+        )
+        if existing_visual_meta:
+            choice = QMessageBox.question(
+                self,
+                "Visual Metadata Exists",
+                "Visual Metadata already exists. Regenerating will incur API costs. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+        
         # Update status
         spinner_text = "מייצר מטא-דאטה ויזואלית (עד 2 דקות)"
         if hasattr(self, "visual_meta_status"):
@@ -3256,8 +3272,12 @@ class PodcastGeneratorWindow(QMainWindow):
         """Mark the UI to show that visual metadata was loaded from disk."""
         label = getattr(self, "visual_meta_status", None)
         if label:
-            label.setText("✅ Visual Metadata Loaded")
-            label.setStyleSheet("color: #16a34a; font-weight: 600;")
+            label.setText("✅ מטא-דאטה ויזואלי נטען (חסכת כסף!)")
+            label.setStyleSheet("color: #16a34a; font-weight: 700;")
+        btn = getattr(self, "visual_meta_btn", None)
+        if btn:
+            btn.setText("צור מחדש (חיוב נוסף)")
+            btn.setStyleSheet(btn.styleSheet() + "font-weight: 700;")
         if source:
             try:
                 self._append_log(f"Visual metadata loaded from {source.name}")

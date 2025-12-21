@@ -239,3 +239,33 @@ class HistoryManager:
         except OSError as exc:
             self.logger.error("[HistoryManager._persist] Failed to write history file: %s", exc)
 
+    def get_costs_since(self, start_date: datetime) -> Dict[str, float]:
+        """
+        Aggregate costs from history entries occurring on/after start_date.
+
+        Args:
+            start_date: Inclusive lower bound for entry dates (UTC-aware or naive).
+
+        Returns:
+            Dictionary of summed cost fields (e.g., openai_cost_usd, tts_characters).
+        """
+        totals: Dict[str, float] = {}
+
+        for entry in self.history:
+            date_str = entry.get("date") or entry.get("timestamp") or ""
+            try:
+                # Handle timestamps with trailing 'Z'
+                parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            except Exception:
+                parsed = None
+
+            if parsed and parsed < start_date:
+                continue
+
+            costs = entry.get("costs") or {}
+            for key, value in costs.items():
+                if isinstance(value, (int, float)):
+                    totals[key] = totals.get(key, 0.0) + float(value)
+
+        return totals
+

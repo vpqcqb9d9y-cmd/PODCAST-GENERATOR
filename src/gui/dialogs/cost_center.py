@@ -11,6 +11,7 @@ Version: 2.0.0 - Redesigned with tabbed interface
 
 from __future__ import annotations
 
+import calendar
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -40,6 +41,13 @@ from PyQt6.QtWidgets import (
 from pyqtgraph import PlotWidget
 
 from src.utils import HistoryManager, Settings
+from src.utils.pricing import (
+    PRICING,
+    azure_vs_elevenlabs_diff,
+    gpt_cost,
+    tts_cost,
+    visual_cost,
+)
 from ..constants import (
     AZURE_GPT_INPUT_COST,
     AZURE_GPT_OUTPUT_COST,
@@ -212,6 +220,21 @@ class CostCenterDialog(QDialog):
         self.tts_spin.setSuffix(" תווים")
         self.tts_spin.setValue(float(self.settings.monthly_tts_character_limit))
         limits_row.addWidget(self.tts_spin)
+
+        limits_row.addWidget(QLabel("מגבלת ElevenLabs:"))
+        self.elevenlabs_spin = QDoubleSpinBox()
+        self.elevenlabs_spin.setRange(50000, 5000000)
+        self.elevenlabs_spin.setDecimals(0)
+        self.elevenlabs_spin.setSuffix(" תווים")
+        self.elevenlabs_spin.setValue(float(getattr(self.settings, "monthly_elevenlabs_character_limit", 100000)))
+        limits_row.addWidget(self.elevenlabs_spin)
+
+        limits_row.addWidget(QLabel("יום איפוס קרדיטים בחודש:"))
+        self.reset_day_spin = QSpinBox()
+        self.reset_day_spin.setRange(1, 31)
+        self.reset_day_spin.setValue(getattr(self.settings, "budget_reset_day", 1))
+        self.reset_day_spin.setToolTip("היום בחודש בו האשראי מתאפס (1-31)")
+        limits_row.addWidget(self.reset_day_spin)
         
         save_btn = QPushButton("שמור מגבלות")
         save_btn.clicked.connect(self._save_limits)
@@ -421,55 +444,105 @@ class CostCenterDialog(QDialog):
 
     def _fill_budget_table(self) -> None:
         """Fill the budget summary table."""
-        totals = self.cost_totals
+        totals = self.cost_totals if isinstance(self.cost_totals, dict) else {}
         openai_limit = max(self.settings.monthly_openai_cost_limit, 0.01)
         tts_limit = max(float(self.settings.monthly_tts_character_limit), 1.0)
         elevenlabs_limit = max(
             float(getattr(self.settings, 'monthly_elevenlabs_character_limit', 100000)), 1.0
         )
-        
-        # Calculate percentages
-        ai_pct = min(100, (totals.get("openai_cost_usd", 0) / openai_limit) * 100)
-        azure_tts_chars = totals.get("tts_characters", 0)
-        azure_tts_pct = min(100, (azure_tts_chars / tts_limit) * 100)
-        elevenlabs_chars = totals.get("elevenlabs_characters", 0)
-        elevenlabs_pct = min(100, (elevenlabs_chars / elevenlabs_limit) * 100)
-        
+
+        reset_day = max(1, min(31, int(getattr(self.settings, "budget_reset_day", 1) or 1)))
+        today = datetime.now().date()
+        if today.day >= reset_day:
+            cycle_year, cycle_month = today.year, today.month
+        else:
+            if today.month == 1:
+                cycle_year, cycle_month = today.year - 1, 12
+            else:
+                cycle_year, cycle_month = today.year, today.month - 1
+        start_day = min(reset_day, calendar.monthrange(cycle_year, cycle_month)[1])
+        start_of_cycle = datetime(cycle_year, cycle_month, start_day)
+
+        mtd_totals = self.history.get_costs_since(start_of_cycle) or {}
+        if not isinstance(mtd_totals, dict):
+            mtd_totals = {}
+
+        def _as_int(val: object) -> int:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
+
+        def _as_float(val: object) -> float:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        # Core AI costs and usage
+        mtd_openai = _as_float(mtd_totals.get("openai_cost_usd", mtd_totals.get("total_cost_usd", 0.0)))
+        total_openai = _as_float(totals.get("openai_cost_usd", totals.get("total_cost_usd", 0.0)))
+        mtd_tokens = _as_int(mtd_totals.get("prompt_tokens", 0)) + _as_int(mtd_totals.get("completion_tokens", 0))
+        total_tokens = _as_int(totals.get("prompt_tokens", 0)) + _as_int(totals.get("completion_tokens", 0))
+
+        # TTS usage
+        azure_tts_chars = _as_int(totals.get("tts_characters", 0))
+        mtd_azure_tts_chars = _as_int(mtd_totals.get("tts_characters", 0))
+        azure_tts_cost_total = _as_float(totals.get("azure_tts_cost_usd", azure_tts_chars * AZURE_TTS_COST_PER_THOUSAND / 1000))
+        azure_tts_cost_mtd = _as_float(mtd_totals.get("azure_tts_cost_usd", mtd_azure_tts_chars * AZURE_TTS_COST_PER_THOUSAND / 1000))
+
+        elevenlabs_chars = _as_int(totals.get("elevenlabs_characters", 0))
+        mtd_elevenlabs_chars = _as_int(mtd_totals.get("elevenlabs_characters", 0))
+        elevenlabs_cost_total = _as_float(totals.get("elevenlabs_tts_cost_usd", elevenlabs_chars * ELEVENLABS_COST_PER_THOUSAND / 1000))
+        elevenlabs_cost_mtd = _as_float(mtd_totals.get("elevenlabs_tts_cost_usd", mtd_elevenlabs_chars * ELEVENLABS_COST_PER_THOUSAND / 1000))
+
         # Google AI visuals usage
-        imagen_images = totals.get("imagen_images", 0)
-        imagen_cost = totals.get("imagen_cost_usd", imagen_images * IMAGEN_COST_PER_IMAGE)
-        veo_seconds = totals.get("veo_seconds", 0)
-        veo_cost = totals.get("veo_cost_usd", veo_seconds * VEO_COST_PER_SECOND)
-        google_ai_cost = imagen_cost + veo_cost
+        imagen_images_total = _as_int(totals.get("imagen_images", 0))
+        imagen_images_mtd = _as_int(mtd_totals.get("imagen_images", 0))
+        imagen_cost_total = _as_float(totals.get("imagen_cost_usd", imagen_images_total * IMAGEN_COST_PER_IMAGE))
+        imagen_cost_mtd = _as_float(mtd_totals.get("imagen_cost_usd", imagen_images_mtd * IMAGEN_COST_PER_IMAGE))
+
+        veo_seconds_total = _as_float(totals.get("veo_seconds", 0))
+        veo_seconds_mtd = _as_float(mtd_totals.get("veo_seconds", 0))
+        veo_cost_total = _as_float(totals.get("veo_cost_usd", veo_seconds_total * VEO_COST_PER_SECOND))
+        veo_cost_mtd = _as_float(mtd_totals.get("veo_cost_usd", veo_seconds_mtd * VEO_COST_PER_SECOND))
+
+        google_ai_cost_total = imagen_cost_total + veo_cost_total
+        google_ai_cost_mtd = imagen_cost_mtd + veo_cost_mtd
         google_ai_limit = max(float(getattr(self.settings, 'monthly_google_ai_limit', 50.0)), 0.01)
-        google_ai_pct = min(100, (google_ai_cost / google_ai_limit) * 100)
-        
+
+        # Calculate percentages (Month-to-Date vs limits)
+        ai_pct = min(100, (mtd_openai / openai_limit) * 100)
+        azure_tts_pct = min(100, (mtd_azure_tts_chars / tts_limit) * 100)
+        elevenlabs_pct = min(100, (mtd_elevenlabs_chars / elevenlabs_limit) * 100)
+        google_ai_pct = min(100, (google_ai_cost_mtd / google_ai_limit) * 100)
+
         rows = [
             (
-                "Azure OpenAI / Gemini",
-                f'{totals.get("prompt_tokens", 0) + totals.get("completion_tokens", 0):,} tokens',
-                f'${totals.get("openai_cost_usd", 0):.2f}',
+                "מוח AI (טקסט)",
+                f'חודש נוכחי: {mtd_tokens:,} טוקנים | סה"כ: {total_tokens:,} טוקנים',
+                f'MTD: ${mtd_openai:.2f} | סה"כ: ${total_openai:.2f}',
                 f'${openai_limit:.0f}',
                 ai_pct,
             ),
             (
-                "Azure Neural TTS",
-                f'{azure_tts_chars:,} תווים',
-                f'${totals.get("azure_tts_cost_usd", azure_tts_chars * 0.000016):.2f}',
+                "יצירת קול (Speech) - Azure",
+                f'חודש נוכחי: {mtd_azure_tts_chars:,} תווים | סה"כ: {azure_tts_chars:,} תווים',
+                f'MTD: ${azure_tts_cost_mtd:.2f} | סה"כ: ${azure_tts_cost_total:.2f}',
                 f'{int(tts_limit):,} תווים',
                 azure_tts_pct,
             ),
             (
-                "ElevenLabs TTS",
-                f'{elevenlabs_chars:,} תווים',
-                f'${totals.get("elevenlabs_tts_cost_usd", elevenlabs_chars * 0.0003):.2f}',
+                "יצירת קול (Speech) - ElevenLabs",
+                f'חודש נוכחי: {mtd_elevenlabs_chars:,} תווים | סה"כ: {elevenlabs_chars:,} תווים',
+                f'MTD: ${elevenlabs_cost_mtd:.2f} | סה"כ: ${elevenlabs_cost_total:.2f}',
                 f'{int(elevenlabs_limit):,} תווים',
                 elevenlabs_pct,
             ),
             (
                 "Google AI (Imagen + VEO)",
-                f'{imagen_images} תמונות | {veo_seconds:.1f} שניות וידאו',
-                f'${google_ai_cost:.2f}',
+                f'Imagen: {imagen_images_mtd} / {imagen_images_total} | VEO: {veo_seconds_mtd:.1f}s / {veo_seconds_total:.1f}s',
+                f'MTD: ${google_ai_cost_mtd:.2f} | סה"כ: ${google_ai_cost_total:.2f}',
                 f'${google_ai_limit:.0f}',
                 google_ai_pct,
             ),
@@ -495,10 +568,13 @@ class CostCenterDialog(QDialog):
 
     def _fill_history_table(self) -> None:
         """Fill the history table with recent runs."""
-        entries = self.history.all()[:30]
+        entries_raw = self.history.all() or []
+        entries = entries_raw[:30] if isinstance(entries_raw, list) else []
         self.history_table.setRowCount(len(entries))
         
         for row_idx, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
             date_str = entry.get("date", "")
             topic = entry.get("topic", "לא ידוע")[:30]
             costs = entry.get("costs") or {}
@@ -547,21 +623,29 @@ class CostCenterDialog(QDialog):
         pen_color, fill_color = colors.get(metric, colors["cost"])
         
         pen = {"color": pen_color, "width": 2}
-        curve = self.chart.plot(
-            x_vals, y_vals,
-            pen=pen,
-            symbol="o",
-            symbolBrush=pen_color,
-            symbolPen=pen_color,
-        )
-        curve.setFillLevel(0)
-        curve.setBrush(fill_color)
-        
-        axis = self.chart.getAxis("bottom")
-        axis.setTicks([[(i, labels[i]) for i in range(len(labels))]])
+        try:
+            curve = self.chart.plot(
+                x_vals, y_vals,
+                pen=pen,
+                symbol="o",
+                symbolBrush=pen_color,
+                symbolPen=pen_color,
+            )
+            curve.setFillLevel(0)
+            curve.setBrush(fill_color)
+            
+            axis = self.chart.getAxis("bottom")
+            axis.setTicks([[(i, labels[i]) for i in range(len(labels))]])
+        except Exception:
+            # Fall back to placeholder if plotting fails due to bad data
+            self.chart.clear()
+            self.chart_placeholder.setVisible(True)
+            self.chart.setVisible(False)
+            return
         
         # Update summary
-        entries = self.history.all()[:30]
+        entries_raw = self.history.all() or []
+        entries = entries_raw[:30] if isinstance(entries_raw, list) else []
         summary = self._summarize_costs(entries)
         self.avg_label.setText(f"${summary['avg']:.2f} ממוצע")
         self.max_label.setText(f"${summary['max']:.2f} שיא")
@@ -572,7 +656,8 @@ class CostCenterDialog(QDialog):
         metric: str,
     ) -> Tuple[List[int], List[float], List[str]]:
         """Build time series data for the chart."""
-        entries = self.history.all()[:30]
+        entries_raw = self.history.all() or []
+        entries = entries_raw[:30] if isinstance(entries_raw, list) else []
         if not entries:
             return [], [], []
         
@@ -580,7 +665,21 @@ class CostCenterDialog(QDialog):
         y_vals: List[float] = []
         labels: List[str] = []
         
+        def _as_float(val: object) -> float:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _as_int(val: object) -> int:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
+
         for idx, entry in enumerate(reversed(entries)):
+            if not isinstance(entry, dict):
+                continue
             date_str = entry.get("date") or ""
             try:
                 date_obj = datetime.fromisoformat(date_str)
@@ -588,20 +687,23 @@ class CostCenterDialog(QDialog):
                 date_obj = datetime.utcnow()
             
             costs = entry.get("costs") or {}
+            if not isinstance(costs, dict):
+                costs = {}
             if metric == "tts":
                 # Total TTS characters in thousands
-                azure = int(costs.get("tts_characters", 0))
-                elevenlabs = int(costs.get("elevenlabs_characters", 0))
+                azure = _as_int(costs.get("tts_characters", 0))
+                elevenlabs = _as_int(costs.get("elevenlabs_characters", 0))
                 value = (azure + elevenlabs) / 1000
             elif metric == "tts_cost":
                 # TTS cost only
-                azure_cost = float(costs.get("azure_tts_cost_usd", costs.get("tts_cost_usd", 0)))
-                elevenlabs_cost = float(costs.get("elevenlabs_tts_cost_usd", 0))
+                azure_cost = _as_float(costs.get("azure_tts_cost_usd", costs.get("tts_cost_usd", 0)))
+                elevenlabs_cost = _as_float(costs.get("elevenlabs_tts_cost_usd", 0))
                 value = azure_cost + elevenlabs_cost
             else:
-                value = float(costs.get("total_cost_usd", 0.0))
+                value = _as_float(costs.get("total_cost_usd", 0.0))
             
-            x_vals.append(idx)
+            pos = len(x_vals)
+            x_vals.append(pos)
             y_vals.append(value)
             labels.append(date_obj.strftime("%m-%d"))
         
@@ -612,14 +714,33 @@ class CostCenterDialog(QDialog):
         if not entries:
             return {"avg": 0.0, "max": 0.0, "tts_total": 0}
         
-        costs = [
-            float((entry.get("costs") or {}).get("total_cost_usd", 0.0))
-            for entry in entries
-        ]
+        def _as_float(val: object) -> float:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _as_int(val: object) -> int:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
+
+        costs = []
+        tts_chars: List[int] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            costs_dict = entry.get("costs") or {}
+            if not isinstance(costs_dict, dict):
+                costs_dict = {}
+            costs.append(_as_float(costs_dict.get("total_cost_usd", 0.0)))
+            tts_chars.append(
+                _as_int(costs_dict.get("tts_characters", 0)) +
+                _as_int(costs_dict.get("elevenlabs_characters", 0))
+            )
         tts_total = sum(
-            int((entry.get("costs") or {}).get("tts_characters", 0)) +
-            int((entry.get("costs") or {}).get("elevenlabs_characters", 0))
-            for entry in entries
+            tts_chars
         )
         avg_cost = sum(costs) / len(costs) if costs else 0.0
         
@@ -633,6 +754,22 @@ class CostCenterDialog(QDialog):
         """Save the updated budget limits."""
         self.settings.monthly_openai_cost_limit = float(self.openai_spin.value())
         self.settings.monthly_tts_character_limit = int(self.tts_spin.value())
+        self.settings.monthly_elevenlabs_character_limit = int(self.elevenlabs_spin.value())
+        self.settings.budget_reset_day = int(self.reset_day_spin.value())
+
+        try:
+            self.settings.save_ui_preferences(
+                {
+                    "budget_reset_day": self.settings.budget_reset_day,
+                    "monthly_openai_cost_limit": self.settings.monthly_openai_cost_limit,
+                    "monthly_tts_character_limit": self.settings.monthly_tts_character_limit,
+                    "monthly_elevenlabs_character_limit": self.settings.monthly_elevenlabs_character_limit,
+                }
+            )
+        except Exception:
+            # Non-fatal: continue without blocking UI
+            pass
+
         self._refresh_all()
         QMessageBox.information(self, "נשמר", "מגבלות התקציב עודכנו בהצלחה.")
 
@@ -652,6 +789,9 @@ class CostCenterDialog(QDialog):
             )
         except ValueError as exc:
             QMessageBox.information(self, "נתונים חסרים", str(exc))
+            return
+        except Exception as exc:  # Defensive: avoid calculator crashes
+            QMessageBox.warning(self, "חישוב נכשל", f"שגיאה בעת חישוב העלות: {exc}")
             return
         self.calc_result.setText(text)
 
@@ -684,74 +824,64 @@ class CostCenterDialog(QDialog):
         Returns:
             Tuple of (breakdown_text, total_cost)
         """
+        words = int(max(0, words))
+        minutes = float(max(0.0, minutes))
+
         if words <= 0 and minutes > 0:
-            words = int(minutes * WORDS_PER_MINUTE)
+            words = int(minutes * PRICING.words_per_minute)
         if words <= 0:
             raise ValueError("הזינו מספר מילים או דקות.")
         
-        tokens = words * TOKENS_PER_WORD
-        output_tokens = tokens * OUTPUT_TOKEN_RATIO
+        tokens = words * PRICING.tokens_per_word
+        output_tokens = tokens * PRICING.output_token_ratio
         
-        if ai_provider == "gemini":
-            gpt_cost = (
-                (tokens / 1000) * GEMINI_INPUT_COST +
-                (output_tokens / 1000) * GEMINI_OUTPUT_COST
-            )
-            model_name = "Gemini Flash"
-        else:
-            gpt_cost = (
-                (tokens / 1000) * AZURE_GPT_INPUT_COST +
-                (output_tokens / 1000) * AZURE_GPT_OUTPUT_COST
-            )
-            model_name = "Azure GPT-4o"
+        provider = "gemini" if ai_provider == "gemini" else "azure"
+        gpt_cost_val = gpt_cost(tokens, output_tokens, provider)  # type: ignore[arg-type]
+        model_name = "Gemini Flash" if provider == "gemini" else "Azure GPT-4o"
         
-        total = gpt_cost
-        breakdown = [f"מודל {model_name}: ${gpt_cost:.3f}"]
+        total = gpt_cost_val
+        breakdown = [f"מודל {model_name}: ${gpt_cost_val:.3f}"]
         
         if include_audio:
-            tts_chars = words * CHARS_PER_WORD
-            if tts_provider == "elevenlabs":
-                tts_cost = (tts_chars / 1000) * ELEVENLABS_COST_PER_THOUSAND
-                tts_name = "ElevenLabs"
-            else:
-                tts_cost = (tts_chars / 1000) * AZURE_TTS_COST_PER_THOUSAND
-                tts_name = "Azure Neural"
-            total += tts_cost
-            breakdown.append(f"TTS ({tts_name}): ${tts_cost:.3f} ({int(tts_chars):,} תווים)")
+            tts_chars = words * PRICING.chars_per_word
+            tts_cost_val, tts_rate = tts_cost(tts_chars, tts_provider if tts_provider in {"azure", "elevenlabs"} else "azure")  # type: ignore[arg-type]
+            tts_name = "ElevenLabs" if tts_provider == "elevenlabs" else "Azure Neural"
+            total += tts_cost_val
+            breakdown.append(
+                f"TTS ({tts_name}): ${tts_cost_val:.3f} "
+                f"({int(tts_chars):,} תווים @ ${tts_rate:.3f}/1K)"
+            )
         
         # Google AI Visuals cost
-        if visual_gen == "imagen" and visual_count > 0:
-            imagen_cost = visual_count * IMAGEN_COST_PER_IMAGE
-            total += imagen_cost
-            breakdown.append(f"Imagen 4 ({visual_count} תמונות): ${imagen_cost:.2f}")
-        elif visual_gen == "veo" and visual_count > 0:
-            veo_cost = visual_count * VEO_COST_PER_SECOND
-            total += veo_cost
-            breakdown.append(f"VEO ({visual_count} שניות): ${veo_cost:.2f}")
-        elif visual_gen == "hybrid" and visual_count > 0:
-            # Assume half images, half video seconds for hybrid
-            imagen_count = visual_count // 2
-            veo_secs = visual_count - imagen_count
-            hybrid_cost = (imagen_count * IMAGEN_COST_PER_IMAGE) + (veo_secs * VEO_COST_PER_SECOND)
-            total += hybrid_cost
-            breakdown.append(f"היברידי ({imagen_count} תמונות + {veo_secs} שניות): ${hybrid_cost:.2f}")
+        if visual_gen in {"imagen", "veo", "hybrid"} and visual_count > 0:
+            visual_cost_val = visual_cost(visual_gen, visual_count)  # type: ignore[arg-type]
+            total += visual_cost_val
+            if visual_gen == "imagen":
+                breakdown.append(f"Imagen 4 ({visual_count} תמונות): ${visual_cost_val:.2f}")
+            elif visual_gen == "veo":
+                breakdown.append(f"VEO ({visual_count} שניות): ${visual_cost_val:.2f}")
+            else:
+                imagen_count = visual_count // 2
+                veo_secs = visual_count - imagen_count
+                breakdown.append(
+                    f"היברידי ({imagen_count} תמונות + {veo_secs} שניות): ${visual_cost_val:.2f}"
+                )
         
         if include_video:
-            total += VIDEO_OVERHEAD_COST
-            breakdown.append(f"וידאו / רינדור: ${VIDEO_OVERHEAD_COST:.2f}")
+            total += PRICING.video_overhead
+            breakdown.append(f"וידאו / רינדור: ${PRICING.video_overhead:.2f}")
         
         if include_ppt:
-            total += PPT_EXTRA_COST
-            breakdown.append(f"PPTX/Story: ${PPT_EXTRA_COST:.2f}")
+            total += PRICING.ppt_extra
+            breakdown.append(f"PPTX/Story: ${PRICING.ppt_extra:.2f}")
         
         breakdown.append("")
         breakdown.append(f"סה\"כ משוער: ${total:.3f}")
         
         # Add comparison if using ElevenLabs
         if include_audio and tts_provider == "elevenlabs":
-            azure_tts = (words * CHARS_PER_WORD / 1000) * AZURE_TTS_COST_PER_THOUSAND
-            diff = tts_cost - azure_tts
-            breakdown.append(f"(הפרש מ-Azure TTS: +${diff:.3f})")
+            diff = azure_vs_elevenlabs_diff(words * PRICING.chars_per_word)
+            breakdown.append(f"(הפרש מ-Azure TTS: {diff:+.3f}$)")
         
         # Add warning for expensive VEO
         if visual_gen == "veo" and visual_count > 0:

@@ -111,6 +111,12 @@ PODCAST GENERATOR/
 
 ## Version History
 
+### Recent Updates (v3.4.0)
+- Google Imagen fully upgraded to Imagen 4 (Fast/Standard/Ultra) with refreshed pricing; legacy Imagen 3 selections are auto-migrated.
+- Cost Center adds a monthly reset day (month-to-date vs. total) so Azure/OpenAI and TTS budgets align to billing cycles; friendlier Hebrew labels for AI/TTS.
+- Visual safety: loading a project now detects existing `visual_metadata.json`, marks it as loaded, and warns before regenerating to avoid extra API charges.
+- Visual settings & calculators use the selected Imagen 4 variant pricing for estimates.
+
 ### Recent Updates (v3.3.1)
 - Manim scene selection uses LLM-derived geometric concepts from dialogue (no hardcoded keywords).
 - OpenCV reads are Unicode-safe across Guardian, Composer, and QA, eliminating false corrupt-image flags on Hebrew paths.
@@ -218,7 +224,7 @@ Imagen 4 (Image Generation)
 Create network maps, architecture diagrams, and slide backgrounds.
 
 Models: imagen-4.0-generate-001 (standard), imagen-4.0-ultra-generate-001 (high precision), imagen-4.0-fast-generate-001 (fast)
-Cost: $0.02-$0.06 per image
+Cost: $0.03-$0.06 per image
 Model selector in GUI: choose the Imagen model per project; legacy imagen-3.0-fast-generate-001 is migrated automatically to imagen-4.0-generate-001 to avoid 404s.
 Preview respects custom prompts: even in Draft mode, existing visual_metadata.json prompts are passed through—no forced blue placeholders.
 VEO (Video Generation)
