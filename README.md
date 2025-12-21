@@ -2,10 +2,15 @@
 
 Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
 
-> **Current version: v3.3.2** | **Build date: 2025-12-12**  
+> **Current version: v3.4.2** | **Build date: 2025-12-21**  
 > Hebrew guide: see [`README.he.md`](README.he.md)
 
 ---
+
+## Hotfix 3.4.2
+- **Manim resilience**: Auto-fallback to `python -m manim` when CLI isn’t on PATH, and absolute paths + `--media_dir` prevent nested/relative path breaks on Windows/Hebrew.
+- **Subtitles in sync**: SRT durations are normalized to the final audio length (word-weighted), so captions hug the spoken timeline and end exactly with audio.
+- **Visual pipeline**: Verified preview runs include real Manim clips and Google Imagen frames; placeholders avoided unless no visuals survive validation.
 
 ## Hotfix 3.3.2
 - **Topic-true visuals**: Removed Azure/vendor defaults from visual metadata; prompts now adapt to topic/mood (tech vs art/music) with hallucination guardrails.

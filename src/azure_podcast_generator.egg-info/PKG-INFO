@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: azure-podcast-generator
-Version: 3.4.0
+Version: 3.4.2
 Summary: Automated pipeline that converts Azure lectures into bilingual podcasts with visuals.
 Author-email: Azure Podcast Generator <maorbensimon1542@gmail.com>
 Requires-Python: >=3.9
