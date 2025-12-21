@@ -24,7 +24,7 @@ class GuardianResult:
 
     assets: List[Path]
     adaptive_timeline: bool = False
-    ken_burns: bool = True
+    ken_burns: bool = False
     audio_normalized: bool = False
 
 
@@ -90,7 +90,7 @@ class ProductionGuardian:
         return GuardianResult(
             assets=sorted(set(valid_images + video_assets)),
             adaptive_timeline=adaptive,
-            ken_burns=True,
+            ken_burns=False,
             audio_normalized=audio_normalized,
         )
 

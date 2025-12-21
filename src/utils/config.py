@@ -40,6 +40,9 @@ class Settings:
     monthly_tts_character_limit: int = field(default_factory=lambda: int(os.getenv("MONTHLY_TTS_CHARACTER_LIMIT", "500000")))
     monthly_openai_cost_limit: float = field(default_factory=lambda: float(os.getenv("MONTHLY_OPENAI_COST_LIMIT", "200.0")))
     budget_reset_day: int = field(default_factory=lambda: int(os.getenv("BUDGET_RESET_DAY", "1")))
+    reset_day_azure: int = field(default_factory=lambda: int(os.getenv("RESET_DAY_AZURE", "14")))
+    reset_day_gemini: int = field(default_factory=lambda: int(os.getenv("RESET_DAY_GEMINI", "1")))
+    reset_day_elevenlabs: int = field(default_factory=lambda: int(os.getenv("RESET_DAY_ELEVENLABS", "1")))
     google_cloud_project: Optional[str] = field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_PROJECT"))
     google_cloud_location: str = field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
@@ -140,7 +143,9 @@ class Settings:
         if self.default_tts_provider == "elevenlabs" and not self.elevenlabs_api_key:
             raise ValueError("ElevenLabs API key not configured. Set ELEVENLABS_API_KEY.")
         # Ensure reset day is valid calendar day
-        self.budget_reset_day = max(1, min(31, int(getattr(self, "budget_reset_day", 1) or 1)))
+        for attr in ("budget_reset_day", "reset_day_azure", "reset_day_gemini", "reset_day_elevenlabs"):
+            current = getattr(self, attr, 1) or 1
+            setattr(self, attr, max(1, min(31, int(current))))
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
         self._load_ui_preferences()
         self._normalize_imagen_model()
@@ -251,6 +256,9 @@ class Settings:
             "output_mode",
             "include_visuals",
             "budget_reset_day",
+            "reset_day_azure",
+            "reset_day_gemini",
+            "reset_day_elevenlabs",
         ):
             if key in prefs:
                 value = prefs[key]
@@ -275,7 +283,7 @@ class Settings:
                 elif key == "image_count":
                     # Ensure image_count is within valid range
                     value = max(1, min(20, int(value) if isinstance(value, (int, float)) else 5))
-                elif key == "budget_reset_day":
+                elif key in {"budget_reset_day", "reset_day_azure", "reset_day_gemini", "reset_day_elevenlabs"}:
                     try:
                         value = int(value)
                     except (TypeError, ValueError):
@@ -392,6 +400,9 @@ class Settings:
             "output_mode",
             "include_visuals",
             "budget_reset_day",
+            "reset_day_azure",
+            "reset_day_gemini",
+            "reset_day_elevenlabs",
             "monthly_openai_cost_limit",
             "monthly_tts_character_limit",
             "monthly_elevenlabs_character_limit",

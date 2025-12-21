@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -251,15 +251,30 @@ class HistoryManager:
         """
         totals: Dict[str, float] = {}
 
+        # Normalize baseline to naive UTC to avoid offset-aware vs naive comparison errors
+        if start_date.tzinfo:
+            start_cmp = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+        else:
+            start_cmp = start_date
+
         for entry in self.history:
             date_str = entry.get("date") or entry.get("timestamp") or ""
             try:
                 # Handle timestamps with trailing 'Z'
-                parsed = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                parsed_raw = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
             except Exception:
+                parsed_raw = None
+
+            if parsed_raw:
+                parsed = (
+                    parsed_raw.astimezone(timezone.utc).replace(tzinfo=None)
+                    if parsed_raw.tzinfo
+                    else parsed_raw
+                )
+            else:
                 parsed = None
 
-            if parsed and parsed < start_date:
+            if parsed and parsed < start_cmp:
                 continue
 
             costs = entry.get("costs") or {}

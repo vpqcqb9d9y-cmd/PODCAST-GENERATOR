@@ -18,6 +18,9 @@ src/gui/app.py
 src/gui/constants.py
 src/gui/widgets.py
 src/gui/workers.py
+src/gui/controllers/__init__.py
+src/gui/controllers/system_monitor.py
+src/gui/controllers/voice_lab.py
 src/gui/dialogs/__init__.py
 src/gui/dialogs/about.py
 src/gui/dialogs/appearance.py
