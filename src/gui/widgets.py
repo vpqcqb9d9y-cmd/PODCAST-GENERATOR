@@ -248,12 +248,13 @@ class ChatBubbleDelegate(QStyledItemDelegate):
         self._doc.setTextWidth(available_width)
         self._doc.setPlainText(text)
         doc_size = self._doc.size().toSize()
+        # Keep bubbles compact: minimal padding so the list starts right below the toolbar
         bubble_width = min(doc_size.width() + 28, option.rect.width() - 16)
-        bubble_height = doc_size.height() + 24
+        bubble_height = doc_size.height() + 16
 
         bubble_rect = QRect(
             option.rect.left() + 8,
-            option.rect.top() + 4,
+            option.rect.top(),
             bubble_width,
             bubble_height,
         )
@@ -316,7 +317,7 @@ class ChatBubbleDelegate(QStyledItemDelegate):
         self._doc.setTextWidth(width)
         self._doc.setPlainText(text)
         doc_size = self._doc.size().toSize()
-        height = doc_size.height() + 28
+        height = doc_size.height() + 16
         parent_width = option.rect.width() or (
             option.widget.width() if option.widget else width + 40
         )

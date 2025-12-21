@@ -158,9 +158,11 @@ class CostCenterDialog(QDialog):
         """Configure window properties."""
         self.setWindowTitle("מרכז עלויות וניתוח")
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.resize(900, 700)
-        self.setMinimumHeight(500)
-        self.setMinimumWidth(700)
+        # Friendlier default size that fits on smaller screens, still resizable
+        self.resize(820, 600)
+        self.setMinimumHeight(420)
+        self.setMinimumWidth(560)
+        self.setSizeGripEnabled(True)
 
     def _setup_ui(self) -> None:
         """Build the tabbed dialog UI."""
