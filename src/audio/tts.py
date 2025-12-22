@@ -48,17 +48,17 @@ class SpeechSynthesizer:
             speechsdk.SpeechSynthesisOutputFormat.Riff16Khz16BitMonoPcm
         )
 
-    def synthesize(self, dialogue_path: Path, run_paths: RunPaths, force: bool = False) -> List[Path]:
+    def synthesize(self, dialogue_path: Path, run_paths: RunPaths, force: bool = False) -> List[Dict[str, object]]:
         run_paths.log("Starting speech synthesis.")
         data = json.loads(dialogue_path.read_text(encoding="utf-8"))
-        segments: List[Path] = []
+        segments: List[Dict[str, object]] = []
         for idx, entry in enumerate(data["dialogue"], start=1):
             target = run_paths.audio_dir / f"{idx:04d}_{entry['speaker'].lower()}.wav"
             if target.exists() and not force:
-                segments.append(target)
+                segments.append({"path": target, "duration": self._probe_duration(target)})
                 continue
             self._synthesize_entry(entry, target)
-            segments.append(target)
+            segments.append({"path": target, "duration": self._probe_duration(target)})
         run_paths.log("Speech synthesis completed.")
         return segments
 
@@ -102,4 +102,12 @@ class SpeechSynthesizer:
   </voice>
 </speak>
 """.strip()
+
+    @staticmethod
+    def _probe_duration(path: Path) -> float:
+        """Best-effort duration reader for a rendered segment."""
+        try:
+            return float(AudioSegment.from_file(path).duration_seconds)
+        except Exception:
+            return 0.0
 

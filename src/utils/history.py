@@ -100,11 +100,17 @@ class HistoryManager:
         """
         entry.setdefault("timestamp", datetime.utcnow().isoformat() + "Z")
         topic = entry.get("topic", "unknown")
-        run_dir = entry.get("run_dir", "unknown")
-        
-        self.logger.info("[HistoryManager.record] Recording new entry: topic='%s', run_dir='%s'", 
+        run_dir = str(entry.get("run_dir", "unknown"))
+
+        # De-duplicate: replace any existing entry for the same run_dir instead of adding a second one
+        before = len(self.history)
+        self.history = [e for e in self.history if e.get("run_dir") != run_dir]
+        if len(self.history) != before:
+            self.logger.debug("[HistoryManager.record] Replacing existing entry for %s", Path(run_dir).name)
+
+        self.logger.info("[HistoryManager.record] Recording entry: topic='%s', run_dir='%s'", 
                         topic, Path(run_dir).name if run_dir else "N/A")
-        
+
         self.history.insert(0, entry)
         self.history = self.history[:200]  # Keep max 200 entries
         self._persist()

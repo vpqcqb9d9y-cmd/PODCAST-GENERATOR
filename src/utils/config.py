@@ -406,6 +406,9 @@ class Settings:
             "monthly_openai_cost_limit",
             "monthly_tts_character_limit",
             "monthly_elevenlabs_character_limit",
+            "cost_center_geometry",
+            "cost_center_tab_index",
+            "cost_center_scroll_pos",
         }
         data = {key: payload[key] for key in payload if key in allowed}
         if not data:

@@ -135,21 +135,23 @@ def generate_srt_from_dialogue(
         output_path.write_text("", encoding="utf-8")
         return output_path
 
-    # Dedicate window to speech only (exclude intro/outro padding)
-    speech_window = max(0.0, total_duration - lead_in_seconds - outro_seconds)
-
     durations: List[float]
     if segment_durations:
         durations = [max(0.01, float(d or 0.0)) for d in segment_durations]
-        # If provided durations do not cover all turns, pad with minimal durations
         if len(durations) < len(turns):
             durations.extend([0.5] * (len(turns) - len(durations)))
+        speech_window = sum(durations)
     else:
+        speech_window = max(0.0, total_duration - lead_in_seconds - outro_seconds)
         durations = _compute_durations(turns, speech_window)
 
     entries: List[str] = []
     cursor = lead_in_seconds
-    latest_end_allowed = lead_in_seconds + speech_window if speech_window > 0 else total_duration
+    audio_limit = total_duration if total_duration > 0 else lead_in_seconds + speech_window
+    if outro_seconds > 0 and total_duration > 0:
+        audio_limit = max(0.0, total_duration - outro_seconds)
+    latest_end_allowed = lead_in_seconds + speech_window if speech_window > 0 else audio_limit
+    latest_end_allowed = min(latest_end_allowed, audio_limit) if audio_limit > 0 else latest_end_allowed
     entry_index = 1
 
     for (turn_idx, text), dur in zip(turns, durations):

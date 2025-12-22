@@ -5,28 +5,28 @@
   "chat_banner_brightness": 0.85,
   "chat_bg_theme": "midnight",
   "default_tts_provider": "azure",
-  "right_panel_width": 348,
-  "main_window_geometry": "01d9d0cb0003000000000001fffffff40000059e0000035200000001000000110000059e00000352000000000000000005a000000001000000110000059e00000352",
-  "main_window_state": "000000ff00000000fd000000000000059e0000032c00000004000000040000000800000008fc00000000",
+  "right_panel_width": 358,
+  "main_window_geometry": "01d9d0cb0003000000000001fffffff4000005a2000003520000000100000011000005a200000352000000000000000005a00000000100000011000005a200000352",
+  "main_window_state": "000000ff00000000fd00000000000005a20000032c00000004000000040000000800000008fc00000000",
   "main_splitter_sizes": [
-    300,
-    1112
+    364,
+    1052
   ],
   "content_splitter_sizes": [
-    758,
-    348
+    688,
+    358
   ],
   "chat_font_path": "",
   "chat_user_bubble": "#0f766e",
   "chat_assistant_bubble": "#4c1d95",
   "output_mode": "video_audio",
   "include_visuals": true,
-  "visual_generator": "hybrid",
+  "visual_generator": "imagen_manim",
   "imagen_model": "imagen-4.0-generate-001",
   "veo_model": "veo-2.0-generate-001",
   "auto_video_duration": true,
   "video_duration_seconds": 300.0,
-  "image_count": 6,
+  "image_count": 3,
   "visual_settings_geometry": "01d9d0cb00030000000001d50000007b000003c8000002bd000001d500000098000003c8000002bd000000000000000005a0000001d500000098000003c8000002bd",
   "azure_default_voice": "he-IL-AvriNeural",
   "budget_reset_day": 1,

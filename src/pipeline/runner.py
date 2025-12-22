@@ -16,6 +16,7 @@ from ..utils.guardian import ProductionGuardian
 from ..utils.visual_metadata_builder import build_visual_metadata_locally, generate_universal_visual_metadata
 from ..visuals import ManimSceneGenerator, VideoComposer, GoogleAIVisualGenerator
 from moviepy.editor import AudioFileClip
+from pydub import AudioSegment
 
 try:
     from ..audio.elevenlabs_tts import ElevenLabsQuotaExceededError
@@ -112,6 +113,9 @@ class LecturePipeline:
         timing = TimingContext(self.logger, "Pipeline execution")
         effective_preview = preview or getattr(self.settings, "preview_mode", False)
         run_type = "PREVIEW" if effective_preview else "FULL"
+        segment_durations: List[float] = []
+        lead_in_seconds = 0.0
+        outro_seconds = 0.0
         # Ensure settings reflect the requested preview flag for downstream consumers
         try:
             self.settings.preview_mode = effective_preview
@@ -349,7 +353,7 @@ class LecturePipeline:
             run_paths.log(f"Using TTS provider: {effective_tts}")
 
             try:
-                segments = tts.synthesize(dialogue_file, run_paths, force=force)
+                segment_results = tts.synthesize(dialogue_file, run_paths, force=force)
             except ElevenLabsQuotaExceededError as exc:
                 if effective_tts != "elevenlabs":
                     raise
@@ -367,10 +371,52 @@ class LecturePipeline:
                     voice_manager=self.voice_manager,
                     provider="azure",
                 )
-                segments = fallback_tts.synthesize(dialogue_file, run_paths, force=force)
+                segment_results = fallback_tts.synthesize(dialogue_file, run_paths, force=force)
                 effective_tts = "azure"
                 run_paths.log("Azure Neural TTS fallback succeeded.")
                 self.logger.info("[LecturePipeline.run] Fallback to Azure Neural TTS completed successfully.")
+
+            # Normalize TTS outputs into paths + durations
+            segment_paths: List[Path] = []
+            segment_durations: List[float] = []
+
+            def _probe_duration(path: Path) -> float:
+                try:
+                    return float(AudioSegment.from_file(path).duration_seconds)
+                except Exception as exc:
+                    self.logger.warning("Failed to read duration for segment %s: %s", path.name, exc)
+                    return 0.0
+
+            for item in segment_results:
+                path_val = item
+                duration_val = None
+                if isinstance(item, dict):
+                    path_val = item.get("path")
+                    duration_val = item.get("duration")
+
+                path_obj = Path(path_val) if path_val is not None else None
+                if path_obj is None:
+                    self.logger.warning("Skipping invalid TTS segment entry: %s", item)
+                    continue
+
+                segment_paths.append(path_obj)
+                duration: float
+                if isinstance(duration_val, (int, float)) and float(duration_val) > 0:
+                    duration = float(duration_val)
+                else:
+                    duration = _probe_duration(path_obj)
+                segment_durations.append(duration)
+
+            # Measure intro/outro durations used in stitching (speech window excludes these)
+            try:
+                intro_clip = self.stitcher._load_music(self.settings.intro_music, duration_ms=3000)
+                outro_clip = self.stitcher._load_music(self.settings.outro_music, duration_ms=2000)
+                lead_in_seconds = float(intro_clip.duration_seconds)
+                outro_seconds = float(outro_clip.duration_seconds)
+            except Exception as exc:
+                self.logger.warning("Failed to probe intro/outro durations: %s", exc)
+                lead_in_seconds = 0.0
+                outro_seconds = 0.0
             self._stage_times["speech_synthesis"] = time.time() - stage_start
             run_paths.log("Speech synthesis completed.")
             timing.checkpoint("speech_synthesis")
@@ -378,8 +424,8 @@ class LecturePipeline:
             # Stage 4: Audio stitching
             stage_start = time.time()
             run_paths.log("🔊 Stitching Audio...")
-            self.logger.info("[LecturePipeline.run] STAGE: Audio stitching (%d segments)", len(segments))
-            self.stitcher.build(segments, metadata, run_paths)
+            self.logger.info("[LecturePipeline.run] STAGE: Audio stitching (%d segments)", len(segment_paths))
+            self.stitcher.build(segment_paths, metadata, run_paths)
             self._stage_times["audio_stitching"] = time.time() - stage_start
             run_paths.log("Audio stitching complete.")
             timing.checkpoint("audio_stitching")
@@ -717,10 +763,20 @@ class LecturePipeline:
                             asset_paths=optimized_assets,
                             adaptive_timeline=guardian_result.adaptive_timeline,
                             apply_ken_burns=guardian_result.ken_burns,
+                            segment_durations=segment_durations,
+                            lead_in_seconds=lead_in_seconds,
+                            outro_seconds=outro_seconds,
                         )
                     except TypeError:
                         # Backward compatibility with simplified composers (e.g., tests)
-                        self.video.compose(dialogue_json, metadata, run_paths)
+                        self.video.compose(
+                            dialogue_json,
+                            metadata,
+                            run_paths,
+                            segment_durations=segment_durations,
+                            lead_in_seconds=lead_in_seconds,
+                            outro_seconds=outro_seconds,
+                        )
                     if not run_paths.final_video_path.exists():
                         raise RuntimeError(
                             f"VideoComposer completed without creating file: {run_paths.final_video_path}"
@@ -758,6 +814,10 @@ class LecturePipeline:
                             run_paths.final_audio_path,
                             run_paths.final_video_path,
                             dialogue_json=dialogue_json,
+                            segment_durations=segment_durations,
+                            lead_in_seconds=lead_in_seconds,
+                            outro_seconds=outro_seconds,
+                            metadata=metadata,
                         )
                         run_paths.log(f"Fallback slide video rendered to {run_paths.final_video_path}")
                         self.logger.info("[LecturePipeline.run] Fallback slide video rendered (anti-fragile path).")

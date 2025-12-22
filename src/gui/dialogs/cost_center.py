@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QByteArray, QTimer, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -151,9 +151,12 @@ class CostCenterDialog(QDialog):
         self._section_label = section_label_factory
         self._card_widget = card_widget_factory
         self._helper_label = helper_label_factory
+        self._last_scroll_pos: int = 0
+        self._last_tab_index: int = 0
         
         self._setup_window()
         self._setup_ui()
+        self._restore_state()
         self._refresh_all()
 
     def _setup_window(self) -> None:
@@ -178,9 +181,11 @@ class CostCenterDialog(QDialog):
         main_layout.addWidget(title)
         
         # Body wrapped in scroll area so dialog can shrink vertically
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
@@ -217,6 +222,7 @@ class CostCenterDialog(QDialog):
         
         # Tab 2: Charts
         self.tabs.addTab(self._build_charts_tab(), "גרפים וניתוח")
+        self.tabs.currentChanged.connect(lambda idx: setattr(self, "_last_tab_index", idx))
         
         scroll_layout.addWidget(self.tabs, 1)
         
@@ -224,8 +230,40 @@ class CostCenterDialog(QDialog):
         scroll_layout.addWidget(self._build_calculator())
         scroll_layout.addStretch(1)
         
-        scroll_area.setWidget(scroll_widget)
-        main_layout.addWidget(scroll_area, 1)
+        self.scroll_area.setWidget(scroll_widget)
+        # Make wheel scrolling less jumpy
+        self.scroll_area.verticalScrollBar().setSingleStep(24)
+        self.scroll_area.verticalScrollBar().setPageStep(160)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        main_layout.addWidget(self.scroll_area, 1)
+
+    def _restore_state(self) -> None:
+        """Restore geometry, tab, and scroll position for the dialog."""
+        geo_hex = getattr(self.settings, "cost_center_geometry", "") or ""
+        if isinstance(geo_hex, str) and geo_hex:
+            try:
+                self.restoreGeometry(QByteArray.fromHex(geo_hex.encode("ascii")))
+            except Exception:
+                # Ignore corrupted geometry
+                pass
+
+        stored_tab = getattr(self.settings, "cost_center_tab_index", 0)
+        if isinstance(stored_tab, int) and 0 <= stored_tab < self.tabs.count():
+            self._last_tab_index = stored_tab
+            self.tabs.setCurrentIndex(stored_tab)
+
+        stored_scroll = getattr(self.settings, "cost_center_scroll_pos", 0)
+        try:
+            self._last_scroll_pos = max(0, int(stored_scroll))
+        except Exception:
+            self._last_scroll_pos = 0
+
+        # Apply scroll restoration after layout is ready
+        QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(self._last_scroll_pos))
+
+    def _on_scroll_changed(self, value: int) -> None:
+        """Track last scroll position for persistence."""
+        self._last_scroll_pos = value
 
     def _build_tables_tab(self) -> QWidget:
         """Build the tables tab content."""
@@ -1182,3 +1220,22 @@ class CostCenterDialog(QDialog):
             breakdown.append("⚠️ VEO יקר מאוד! שקול להשתמש ב-Manim או Imagen")
         
         return "\n".join(breakdown), total
+
+    def closeEvent(self, event) -> None:
+        """Persist cost center UI state on close."""
+        try:
+            geo_hex = bytes(self.saveGeometry().toHex()).decode("ascii")
+            scroll_val = (
+                self.scroll_area.verticalScrollBar().value() if getattr(self, "scroll_area", None) else 0
+            )
+            tab_idx = self.tabs.currentIndex() if getattr(self, "tabs", None) else 0
+            self.settings.save_ui_preferences(
+                {
+                    "cost_center_geometry": geo_hex,
+                    "cost_center_tab_index": int(tab_idx),
+                    "cost_center_scroll_pos": int(scroll_val),
+                }
+            )
+        except Exception as exc:
+            print(f"[CostCenterDialog] Failed to save UI state: {exc}")
+        super().closeEvent(event)

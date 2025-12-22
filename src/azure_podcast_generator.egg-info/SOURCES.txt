@@ -52,6 +52,7 @@ src/utils/costs.py
 src/utils/guardian.py
 src/utils/history.py
 src/utils/logging.py
+src/utils/pricing.py
 src/utils/quality_checker.py
 src/utils/storage.py
 src/utils/visual_metadata_builder.py
@@ -64,6 +65,8 @@ src/visuals/video_composer.py
 tests/test_chunker.py
 tests/test_elevenlabs_overrides.py
 tests/test_google_ai_visuals.py
+tests/test_hybrid_quality.py
+tests/test_metadata_merge.py
 tests/test_pipeline_video.py
 tests/test_quality_checker.py
 tests/test_run_paths.py

@@ -177,7 +177,7 @@ class ElevenLabsSpeechSynthesizer:
 
     def synthesize(
         self, dialogue_path: Path, run_paths: RunPaths, force: bool = False
-    ) -> List[Path]:
+    ) -> List[Dict[str, object]]:
         """
         Synthesize all dialogue entries to audio files.
 
@@ -187,13 +187,14 @@ class ElevenLabsSpeechSynthesizer:
             force: Whether to overwrite existing files
 
         Returns:
-            List of paths to generated audio segments
+            List of dicts with generated audio segments:
+            {"path": Path, "duration": float}
         """
         run_paths.log("Starting speech synthesis (ElevenLabs).")
         self.logger.info("[ElevenLabsTTS.synthesize] ========== TTS SYNTHESIS START ==========")
         
         data = json.loads(dialogue_path.read_text(encoding="utf-8"))
-        segments: List[Path] = []
+        segments: List[Dict[str, object]] = []
         
         # Track statistics for logging
         total_characters = 0
@@ -217,7 +218,7 @@ class ElevenLabsSpeechSynthesizer:
             
             if target.exists() and not force:
                 self.logger.debug("Skipping existing segment: %s", target.name)
-                segments.append(target)
+                segments.append({"path": target, "duration": self._probe_duration(target)})
                 continue
             
             # Get voice config for logging
@@ -236,7 +237,7 @@ class ElevenLabsSpeechSynthesizer:
             speaker_stats[speaker]["characters"] += len(text)
             
             self._synthesize_entry(entry, target)
-            segments.append(target)
+            segments.append({"path": target, "duration": self._probe_duration(target)})
         
         # Log synthesis summary
         self.logger.info("[ElevenLabsTTS.synthesize] ========== TTS SYNTHESIS SUMMARY ==========")
@@ -438,6 +439,14 @@ class ElevenLabsSpeechSynthesizer:
             settings.update(voice_config["settings"])
         
         return settings
+
+    @staticmethod
+    def _probe_duration(path: Path) -> float:
+        """Best-effort duration reader for a rendered segment."""
+        try:
+            return float(AudioSegment.from_file(path).duration_seconds)
+        except Exception:
+            return 0.0
 
     def list_available_voices(self) -> List[Dict]:
         """

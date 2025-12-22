@@ -3693,23 +3693,50 @@ class PodcastGeneratorWindow(QMainWindow):
         if not (self.run_stage_label and self.run_progress_bar and self.run_timer_label):
             return
         
-        stage = self.pipeline_stages[min(self.pipeline_stage_index, len(self.pipeline_stages) - 1)]
         duration_estimates = self._stage_duration_estimates()
         estimated_total = sum(duration_estimates)
+
+        # If no stage keyword arrived yet, advance stages based on elapsed time so ETA
+        # does not stay stuck on "מאתחל" until completion.
+        if self.pipeline_start_time and duration_estimates:
+            elapsed = max(0.0, time.perf_counter() - self.pipeline_start_time)
+            cumulative = 0.0
+            projected_index = self.pipeline_stage_index
+            for idx, est in enumerate(duration_estimates):
+                cumulative += max(est, 1.0)
+                if elapsed >= cumulative:
+                    projected_index = idx
+            projected_index = min(projected_index, len(self.pipeline_stages) - 1)
+            if projected_index > self.pipeline_stage_index:
+                self.pipeline_stage_index = projected_index
+                self._current_stage_start = time.perf_counter()
+
+        stage = self.pipeline_stages[min(self.pipeline_stage_index, len(self.pipeline_stages) - 1)]
         
         # Calculate progress value using ETA-aware stage duration estimates
         progress_value: int
         if percent is not None:
             progress_value = percent
         elif estimated_total > 0 and self.pipeline_stage_index < len(duration_estimates):
-            completed_time = sum(duration_estimates[:self.pipeline_stage_index])
+            # Prefer real elapsed time to reduce ETA drift when stages are slower/faster than averages
+            actual_elapsed = 0.0
+            if self.pipeline_start_time:
+                actual_elapsed = max(0.0, time.perf_counter() - self.pipeline_start_time)
+
             current_estimate = duration_estimates[self.pipeline_stage_index]
             stage_elapsed = 0.0
             if self._current_stage_start:
                 stage_elapsed = max(0.0, time.perf_counter() - self._current_stage_start)
+
+            completed_time = max(0.0, actual_elapsed - stage_elapsed)
+            # Fallback to estimated completed time if we have no elapsed yet (e.g., instant stage transition)
+            if completed_time == 0 and self.pipeline_stage_index:
+                completed_time = sum(duration_estimates[:self.pipeline_stage_index])
+
             stage_progress = 0.0
             if current_estimate > 0:
                 stage_progress = min(0.95, stage_elapsed / current_estimate)
+
             progress_value = int(
                 ((completed_time + stage_progress * current_estimate) / estimated_total) * 100
             )
@@ -4127,7 +4154,11 @@ class PodcastGeneratorWindow(QMainWindow):
             valid_entries.append(entry)
             run_dir = entry.get("run_dir")
             if run_dir:
-                self.history_index[str(run_dir)] = entry
+                # Index both raw and normalized absolute paths to avoid duplicate "זוהה" entries
+                raw = str(run_dir)
+                norm = str(Path(run_dir).resolve())
+                self.history_index[raw] = entry
+                self.history_index[norm] = entry
 
         # Log cleanup if any invalid entries were removed
         if invalid_count > 0:
@@ -4171,7 +4202,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 continue
             if item.name.startswith(".") or item.name.startswith("_"):
                 continue
-            if str(item) in self.history_index:
+            if str(item) in self.history_index or str(item.resolve()) in self.history_index:
                 continue
 
             metadata_file = item / "metadata.json"
@@ -4185,6 +4216,7 @@ class PodcastGeneratorWindow(QMainWindow):
                 self.history.record(entry)
                 discovered_entries.append(entry)
                 self.history_index[str(item)] = entry
+                self.history_index[str(item.resolve())] = entry
             except (json.JSONDecodeError, OSError):
                 continue
 
@@ -4499,7 +4531,9 @@ class PodcastGeneratorWindow(QMainWindow):
         elif (run_dir / "story.json").exists():
             entry["story"] = str(run_dir / "story.json")
         entry = self._hydrate_history_entry(run_dir, entry)
+        # Index both raw and normalized absolute paths
         self.history_index[str(run_dir)] = entry
+        self.history_index[str(run_dir.resolve())] = entry
         return entry
 
     def _hydrate_history_entry(self, run_dir: Path, entry: Dict) -> Dict:
