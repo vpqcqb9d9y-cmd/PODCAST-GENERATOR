@@ -26,8 +26,6 @@ from moviepy.editor import (
     vfx,
 )
 from moviepy.video.tools.subtitles import SubtitlesClip
-import arabic_reshaper
-from bidi.algorithm import get_display
 from ..utils import RunPaths, Settings, get_logger
 from .subtitle_generator import generate_srt_from_dialogue
 
@@ -643,6 +641,9 @@ class VideoComposer:
         audio_file: Path,
         output_file: Path,
         dialogue_json: Optional[Dict] = None,
+        segment_durations: Optional[List[float]] = None,
+        lead_in_seconds: float = 0.0,
+        outro_seconds: float = 0.0,
         metadata: Optional[Dict] = None,
     ) -> Path:
         """
@@ -713,7 +714,14 @@ class VideoComposer:
         captions_path = output_file.parent / "captions.srt"
         if dialogue_json:
             try:
-                self._write_srt(dialogue_json, audio_duration, captions_path)
+                self._write_srt(
+                    dialogue_json,
+                    audio_duration,
+                    captions_path,
+                    segment_durations=segment_durations,
+                    lead_in_seconds=lead_in_seconds,
+                    outro_seconds=outro_seconds,
+                )
             except Exception as exc:
                 self.logger.error("Failed to write captions.srt: %s", exc)
 
@@ -797,11 +805,10 @@ class VideoComposer:
                 self.logger.info("Falling back to MoviePy SubtitlesClip overlay.")
 
                 def _text_factory(txt: str) -> TextClip:
-                    shaped = arabic_reshaper.reshape(txt)
-                    bidi_text = get_display(shaped)
+                    # Text in SRT is already shaped for RTL at generation time; avoid double shaping/shrinking.
                     return TextClip(
-                        bidi_text,
-                        fontsize=60,
+                        txt,
+                        fontsize=45,
                         font="Arial",
                         color="white",
                         bg_color="rgba(0,0,0,0.55)",
@@ -885,8 +892,8 @@ class VideoComposer:
         srt_for_ffmpeg = srt_path_resolved.as_posix().replace("\\", "/").replace(":", r"\:")
         filter_style = (
             "subtitles='{srt}':force_style="
-            "'FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-            "BackColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=20'"
+            "'FontName=Arial,FontSize=20,Alignment=2,WrapStyle=2,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+            "BackColour=&H80000000,BorderStyle=4,Outline=1,Shadow=0,MarginV=48'"
         ).format(srt=srt_for_ffmpeg)
 
         cmd = [
@@ -911,36 +918,34 @@ class VideoComposer:
                 f"FFmpeg subtitle burn failed (code {result.returncode}): {result.stderr or result.stdout}"
             )
 
-    def _write_srt(self, dialogue_json: Dict, total_duration: float, output_path: Path) -> None:
+    def _write_srt(
+        self,
+        dialogue_json: Dict,
+        total_duration: float,
+        output_path: Path,
+        segment_durations: Optional[List[float]] = None,
+        lead_in_seconds: float = 0.0,
+        outro_seconds: float = 0.0,
+    ) -> None:
         """
-        Generate a basic SRT file from dialogue turns.
-
-        Timing heuristic: allocate 0.4s per word, clamped to [2s, 6s] per caption,
-        preserving sequence. Ensures the last caption does not exceed total audio duration.
+        Generate SRT captions, preferring exact TTS segment durations when provided.
         """
         turns = [d for d in dialogue_json.get("dialogue", []) if isinstance(d, dict)]
         if not turns:
             return
 
-        entries: List[str] = []
-        cursor = 0.0
-        for idx, turn in enumerate(turns, start=1):
-            text = str(turn.get("text", "")).strip()
-            if not text:
-                continue
-            words = len(text.split()) or 1
-            duration = min(6.0, max(2.0, words * 0.4))
-            start = cursor
-            end = min(cursor + duration, total_duration)
-            cursor = end
-            entries.append(
-                f"{idx}\n{self._format_ts(start)} --> {self._format_ts(end)}\n{text}\n"
+        try:
+            generate_srt_from_dialogue(
+                dialogue_json,
+                total_duration,
+                output_path,
+                segment_durations=segment_durations,
+                lead_in_seconds=lead_in_seconds,
+                outro_seconds=outro_seconds,
             )
-            if cursor >= total_duration:
-                break
-
-        output_path.write_text("\n".join(entries), encoding="utf-8")
-        self.logger.info("captions.srt written with %d entries", len(entries))
+            self.logger.info("captions.srt written with %d entries", len(turns))
+        except Exception as exc:
+            self.logger.error("Failed to generate SRT: %s", exc)
 
     @staticmethod
     def _format_ts(seconds: float) -> str:
@@ -958,6 +963,9 @@ class VideoComposer:
         asset_paths: Optional[List[Path]] = None,
         adaptive_timeline: bool = False,
         apply_ken_burns: bool = True,
+        segment_durations: Optional[List[float]] = None,
+        lead_in_seconds: float = 0.0,
+        outro_seconds: float = 0.0,
     ) -> Path:
         # In production mode, block rendering if only placeholders are present
         if not getattr(self.settings, "preview_mode", False):
@@ -1025,6 +1033,9 @@ class VideoComposer:
             run_paths.final_audio_path,
             run_paths.final_video_path,
             dialogue_json=dialogue_json,
+            segment_durations=segment_durations,
+            lead_in_seconds=lead_in_seconds,
+            outro_seconds=outro_seconds,
             metadata=metadata,
         )
         elapsed = time.perf_counter() - start
@@ -1276,6 +1287,18 @@ class VideoComposer:
         y = (card_bounds[1] + 200) if hero else (card_bounds[1] + 240)
         bullet_width = card_bounds[2] - card_bounds[0] - 180
         line_height = getattr(font_body, "size", 32) + 8
+        available_height = (card_bounds[3] - 200) - y
+        total_lines = 0
+        bullet_count = 0
+        for bullet in bullets:
+            if not bullet:
+                continue
+            bullet_count += 1
+            total_lines += len(self._wrap_text(bullet, font_body, bullet_width))
+        total_height = total_lines * line_height + max(0, bullet_count - 1) * 12
+        if total_height > available_height:
+            font_body = self._scaled_body_font(font_body, 0.8)
+            line_height = int(line_height * 0.8)
         for bullet in bullets:
             if not bullet:
                 continue
@@ -1505,6 +1528,23 @@ class VideoComposer:
             return int(font.getlength(text))
         return max(len(text), 1) * max(font.size, 10) // 2
 
+    def _scaled_body_font(self, font_body: ImageFont.ImageFont, scale: float) -> ImageFont.ImageFont:
+        """
+        Best-effort font scaling for body text to mitigate overflow.
+        """
+        target_size = max(10, int(getattr(font_body, "size", 32) * scale))
+        spec = getattr(self, "_font_body_spec", None)
+        if spec:
+            name, _ = spec
+            try:
+                return ImageFont.truetype(name, target_size)
+            except Exception:
+                pass
+        try:
+            return font_body.font_variant(size=target_size)  # type: ignore[attr-defined]
+        except Exception:
+            return font_body
+
     def _load_fonts(self) -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
         # Try Hebrew-supporting fonts in order of preference
         font_options = [
@@ -1520,12 +1560,16 @@ class VideoComposer:
                 title_font = ImageFont.truetype(font_name, title_size)
                 body_font = ImageFont.truetype(font_name, body_size)
                 self.logger.debug("Loaded Hebrew-compatible font: %s", font_name)
+                self._font_title_spec = (font_name, title_size)
+                self._font_body_spec = (font_name, body_size)
                 return title_font, body_font
             except OSError:
                 continue
 
         # Fallback to default font
         self.logger.warning("No Hebrew-compatible fonts found, using default font")
+        self._font_title_spec = None
+        self._font_body_spec = None
         fallback = ImageFont.load_default()
         return fallback, fallback
 
