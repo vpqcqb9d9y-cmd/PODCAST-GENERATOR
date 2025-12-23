@@ -852,12 +852,10 @@ class VideoComposer:
             if ffmpeg_burn_failed:
                 self.logger.info("Falling back to MoviePy SubtitlesClip overlay.")
 
+                from .subtitle_generator import fix_rtl_text
+
                 def _text_factory(txt: str) -> TextClip:
-                    try:
-                        shaped = arabic_reshaper.reshape(txt)
-                        bidi_text = get_display(shaped)
-                    except Exception:
-                        bidi_text = txt
+                    bidi_text = fix_rtl_text(txt)
                     return TextClip(
                         bidi_text,
                         fontsize=45,

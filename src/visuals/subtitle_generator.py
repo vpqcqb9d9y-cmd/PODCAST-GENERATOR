@@ -4,6 +4,13 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 import re
 
+try:
+    import arabic_reshaper  # type: ignore
+    from bidi.algorithm import get_display  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    arabic_reshaper = None
+    get_display = None
+
 
 def _format_ts(seconds: float) -> str:
     hrs = int(seconds // 3600)
@@ -105,6 +112,29 @@ def _split_turn_text(
     return chunks or [text.strip()]
 
 
+def fix_rtl_text(text: str) -> str:
+    """
+    Apply BiDi shaping so mixed Hebrew/English and punctuation render correctly.
+
+    - Uses arabic_reshaper + python-bidi when available.
+    - Falls back to the original text if shaping fails or dependencies are missing.
+    """
+    if not text:
+        return ""
+    shaped = text
+    if arabic_reshaper is not None:
+        try:
+            shaped = arabic_reshaper.reshape(text)
+        except Exception:
+            shaped = text
+    if get_display is not None:
+        try:
+            return get_display(shaped, base_dir="R")
+        except Exception:
+            return shaped
+    return shaped
+
+
 def generate_srt_from_dialogue(
     dialogue_json: Dict,
     total_duration: float,
@@ -172,9 +202,10 @@ def generate_srt_from_dialogue(
                 end = chunk_cursor + chunk_dur
                 if end <= start:
                     continue
+                visual_text = fix_rtl_text(chunk_text)
 
                 entries.append(
-                    f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{chunk_text}\n"
+                    f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{visual_text}\n"
                 )
                 entry_index += 1
                 chunk_cursor = end
@@ -214,9 +245,10 @@ def generate_srt_from_dialogue(
                 end = min(cursor + chunk_dur, latest_end_allowed)
                 if end <= start:
                     continue
+                visual_text = fix_rtl_text(chunk_text)
 
                 entries.append(
-                    f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{chunk_text}\n"
+                    f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{visual_text}\n"
                 )
                 entry_index += 1
                 cursor = end
