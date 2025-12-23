@@ -5,16 +5,16 @@
   "chat_banner_brightness": 0.85,
   "chat_bg_theme": "midnight",
   "default_tts_provider": "azure",
-  "right_panel_width": 358,
-  "main_window_geometry": "01d9d0cb0003000000000001fffffff4000005a2000003520000000100000011000005a200000352000000000000000005a00000000100000011000005a200000352",
-  "main_window_state": "000000ff00000000fd00000000000005a20000032c00000004000000040000000800000008fc00000000",
+  "right_panel_width": 360,
+  "main_window_geometry": "01d9d0cb0003000000000001fffffff4000005b2000003520000000100000011000005b200000352000000000000000005a00000000100000011000005b200000352",
+  "main_window_state": "000000ff00000000fd00000000000005b20000032c00000004000000040000000800000008fc00000000",
   "main_splitter_sizes": [
     364,
-    1052
+    1068
   ],
   "content_splitter_sizes": [
-    688,
-    358
+    702,
+    360
   ],
   "chat_font_path": "",
   "chat_user_bubble": "#0f766e",
@@ -29,6 +29,7 @@
   "image_count": 3,
   "visual_settings_geometry": "01d9d0cb00030000000001d50000007b000003c8000002bd000001d500000098000003c8000002bd000000000000000005a0000001d500000098000003c8000002bd",
   "azure_default_voice": "he-IL-AvriNeural",
+  "version": "3.4.4",
   "budget_reset_day": 1,
   "monthly_openai_cost_limit": 180.0,
   "monthly_tts_character_limit": 450000,

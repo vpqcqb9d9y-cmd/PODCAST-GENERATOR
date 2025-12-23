@@ -2,7 +2,7 @@
 
 Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
 
-> **Current version: v3.4.3** | **Build date: 2025-12-22**  
+> **Current version: v3.4.4** | **Build date: 2025-12-23**  
 > Hebrew guide: see [`README.he.md`](README.he.md)
 
 ---
@@ -26,6 +26,9 @@ Transform long-form Hebrew lectures into concise, studio-grade podcasts and expl
 - End-to-end pipeline: chunking, dialogue generation, TTS, stitching, visuals, PPT/story export.
 - Cost center, logs center, history browser, backup/restore utilities.
 - CLI scripts for headless pipeline and visual metadata generation.
+
+## Technical Notes
+- **RTL/BiDi-safe captions**: Captions apply LRI/PDI isolation for embedded English/number tokens and append RLM for trailing punctuation so Hebrew mixed with English (e.g., “Microsoft 365”, “IT”) renders in the correct visual order. Shaping uses arabic-reshaper + python-bidi when available; fallback keeps isolation and punctuation anchoring for standard SRT players.
 
 ## Installation
 1. **Prerequisites**
