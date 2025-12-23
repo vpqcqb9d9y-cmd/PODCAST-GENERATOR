@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 
+STUDIO_STYLE = (
+    "High-end 3D isometric illustration (or minimalist professional 3D render), "
+    "soft global illumination, 8k resolution, cinematic depth of field, studio polish"
+)
 ISRAELI_COLOR_PALETTES: Sequence[Dict[str, str]] = (
     {
         "name": "TelAvivNight",
@@ -97,8 +101,9 @@ class VisualMetadataBuilder:
         style_profile = self._visual_style_for_topic()
         prompt = (
             f"Cinematic opening frame introducing '{self.topic}'. {style_profile['vibe']}. "
+            f"High-end 3D isometric illustration with soft global illumination and 8k resolution. "
             f"Visuals reflect the story/lyrics: {self.summary[:140] if self.summary else 'תיאור קצר של הנושא'}. "
-            f"Color mood: {palette['colors']}. High-quality 4K, Hebrew-friendly composition."
+            f"Color mood: {palette['colors']}. Hebrew-friendly composition."
         )
         return self._image_payload(
             index=index,
@@ -115,6 +120,7 @@ class VisualMetadataBuilder:
         style_profile = self._visual_style_for_topic()
         prompt = (
             f"Visualize the idea '{concept}' as part of {self.topic}. {style_profile['vibe']}. "
+            f"High-end 3D isometric illustration, soft global illumination, 8k resolution. "
             f"Use Hebrew labels where text appears. Avoid generic tech labs unless the topic demands it."
         )
         return self._image_payload(
@@ -132,7 +138,8 @@ class VisualMetadataBuilder:
         style_profile = self._visual_style_for_topic()
         prompt = (
             f"Hands-on moment that matches '{self.topic}': learner practicing the material. "
-            f"{style_profile['vibe']}. Use props that fit the domain (music/art: instruments/stage; "
+            f"{style_profile['vibe']}. High-end 3D isometric illustration with soft GI, 8k, cinematic depth. "
+            f"Use props that fit the domain (music/art: instruments/stage; "
             f"technical: whiteboard/devices), warm lighting, authentic Hebrew context."
         )
         return self._image_payload(
@@ -150,13 +157,14 @@ class VisualMetadataBuilder:
         style_profile = self._visual_style_for_topic()
         prompt = (
             f"Quote spotlight from the dialogue: {quote[:180]}. {style_profile['vibe']}. "
+            "High-end 3D isometric framing with clean typography, soft global illumination, 8k resolution. "
             "Design for clear Hebrew typography with high contrast."
         )
         return self._image_payload(
             index=index,
             title="ציטוט מרכזי",
             prompt=prompt,
-            style="podcast studio photography + typography overlay",
+            style=style_profile["style"],
             mood="דיאלוגי ואותנטי",
             palette=palette["colors"],
             context=f"הצגת הציטוט: {quote}",
@@ -167,6 +175,7 @@ class VisualMetadataBuilder:
         style_profile = self._visual_style_for_topic()
         prompt = (
             f"Complementary abstract visual for '{self.topic}'. {style_profile['vibe']}. "
+            f"High-end 3D isometric illustration, soft global illumination, 8k resolution. "
             f"Hebrew-friendly composition, avoids brand names, focuses on mood '{palette['mood']}'."
         )
         return self._image_payload(
@@ -215,20 +224,21 @@ class VisualMetadataBuilder:
         if any(k in mood for k in ["art", "music", "culture"]):
             is_art = True
 
+        base_style = STUDIO_STYLE
         if is_tech and not is_art:
             return {
-                "style": "modern data-visualization studio, clean gradients, crisp lighting",
+                "style": f"{base_style}; modern data-visualization studio, clean gradients, crisp lighting",
                 "vibe": "Modern professional studio with data viz accents, respectful and clear",
                 "mood": "מקצועי וחדשני",
             }
         if is_art:
             return {
-                "style": "cinematic documentary, warm lighting, emotional storytelling",
+                "style": f"{base_style}; cinematic documentary, warm lighting, emotional storytelling",
                 "vibe": "Cinematic documentary feel with expressive framing and human focus",
                 "mood": "חם ומרגש",
             }
         return {
-            "style": "professional educational illustration, clean modern design",
+            "style": f"{base_style}; professional educational illustration, clean modern design",
             "vibe": "Professional educational look tailored to the specific topic",
             "mood": "חינוכי ומזמין",
         }
@@ -237,7 +247,8 @@ class VisualMetadataBuilder:
         profile = self._visual_style_for_topic()
         return (
             profile["vibe"],
-            f"{profile['style']}; always tailor visuals to the given topic and avoid vendor-specific branding.",
+            f"{profile['style']}; always tailor visuals to the given topic, avoid vendor logos/UI, "
+            "and keep any on-frame text under 25 characters.",
         )
 
     @staticmethod
@@ -445,7 +456,7 @@ def generate_universal_prompt(concept: str, content_type: str, topic: str) -> st
 
     prompt = base_prompts.get(content_type, base_prompts["educational_general"])
     quality_additions = (
-        ", highly detailed, professional quality, 4K resolution, educational context, clear and understandable"
+        f", {STUDIO_STYLE}, highly detailed, professional quality, educational context, clear and understandable"
     )
 
     return f"{prompt}{quality_additions}"
@@ -454,14 +465,14 @@ def generate_universal_prompt(concept: str, content_type: str, topic: str) -> st
 def determine_visual_style(content_type: str) -> str:
     """Determine appropriate visual style based on content type."""
     styles = {
-        "technical_programming": "clean technical diagram, code interface, modern UI design",
-        "technical_networking": "professional network diagram, infrastructure visualization, technical illustration",
-        "business_professional": "corporate presentation, business infographic, professional chart design",
-        "science_medical": "scientific illustration, medical diagram, laboratory photography",
-        "creative_artistic": "modern digital art, creative illustration, artistic composition",
-        "educational_general": "educational infographic, clean diagram, instructional design",
+        "technical_programming": f"{STUDIO_STYLE}; clean technical diagram, code interface, modern UI design",
+        "technical_networking": f"{STUDIO_STYLE}; professional network diagram, infrastructure visualization, technical illustration",
+        "business_professional": f"{STUDIO_STYLE}; corporate presentation, business infographic, professional chart design",
+        "science_medical": f"{STUDIO_STYLE}; scientific illustration, medical diagram, laboratory photography",
+        "creative_artistic": f"{STUDIO_STYLE}; modern digital art, creative illustration, artistic composition",
+        "educational_general": f"{STUDIO_STYLE}; educational infographic, clean diagram, instructional design",
     }
-    return styles.get(content_type, "educational infographic, professional design")
+    return styles.get(content_type, f"{STUDIO_STYLE}; educational infographic, professional design")
 
 
 def determine_emotional_mood(concept: str) -> str:

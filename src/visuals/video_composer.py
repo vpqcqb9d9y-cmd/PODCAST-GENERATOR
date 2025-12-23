@@ -47,9 +47,9 @@ class VideoComposer:
     def __post_init__(self) -> None:
         self.logger = get_logger(self.__class__.__name__)
 
-    def apply_ken_burns(self, clip: VideoClip, zoom_factor: float = 1.15) -> VideoClip:
+    def apply_ken_burns(self, clip: VideoClip, zoom_factor: float = 1.05) -> VideoClip:
         """
-        Apply a stronger Ken Burns pan/zoom to a static clip with subtle drift.
+        Apply a slow Ken Burns pan/zoom (~5%) to a static clip with subtle drift.
         """
         duration = max(getattr(clip, "duration", 0.0) or 0.0, 0.001)
 
@@ -57,8 +57,8 @@ class VideoComposer:
             return 1.0 + (zoom_factor - 1.0) * (t / duration)
 
         # Randomize drift direction slightly to keep shots feeling alive
-        x_drift = random.uniform(-0.08, 0.08) * clip.w
-        y_drift = random.uniform(-0.08, 0.08) * clip.h
+        x_drift = random.uniform(-0.04, 0.04) * clip.w
+        y_drift = random.uniform(-0.04, 0.04) * clip.h
         start_x = clip.w / 2
         start_y = clip.h / 2
         end_x = start_x + x_drift
@@ -352,10 +352,22 @@ class VideoComposer:
         """
         Build video timeline aligned with the final audio.
         """
+        if not apply_ken_burns:
+            self.logger.info(
+                "[VideoComposer] Enforcing Ken Burns (5%% zoom) for all static visuals; override ignored."
+            )
+        apply_ken_burns = True
+        preview_cap = 3 if getattr(self.settings, "preview_mode", False) else None
+
         audio_clip = AudioFileClip(str(audio_file))
         total_duration = audio_clip.duration
         audio_clip.close()
         turn_count = max(len(dialogue_json.get("dialogue", [])), 1)
+        visual_cues = []
+        try:
+            visual_cues = [float(x) for x in metadata.get("visual_cues", [])] if isinstance(metadata, dict) else []
+        except Exception:
+            visual_cues = []
 
         # Prefer actual timestamps if present for tighter audio-visual sync
         turn_durations: List[float] = []
@@ -408,6 +420,12 @@ class VideoComposer:
                 placeholder_count,
             )
 
+        if preview_cap:
+            prioritized_images = prioritized_images[:preview_cap]
+            if video_files:
+                video_files = video_files[:preview_cap]
+            self.logger.info("[VideoComposer] Preview cap active: limiting visuals to %d asset(s).", preview_cap)
+
         # Validate images before composing to avoid corrupted assets.
         if asset_paths is not None:
             raw_image_count = getattr(self.settings, "image_count", 1)
@@ -423,6 +441,9 @@ class VideoComposer:
             except Exception:
                 parsed_count = len(prioritized_images) or 5
             required_image_count = max(len(prioritized_images), parsed_count)
+
+        if preview_cap:
+            required_image_count = min(preview_cap, required_image_count)
 
         image_files = self.get_valid_images(
             animations_dir,
@@ -526,6 +547,9 @@ class VideoComposer:
                 elif suffix in self.IMAGE_EXTENSIONS:
                     ordered_assets.append(("image", path))
 
+        if preview_cap:
+            ordered_assets = ordered_assets[:preview_cap]
+
         # ----- Duration planning -----
         video_durations: Dict[Path, float] = {}
         for _, media in [(t, p) for t, p in ordered_assets if t == "video"]:
@@ -593,6 +617,10 @@ class VideoComposer:
                     clip = self._apply_start(clip, current_start)
                     self.logger.info("Added video clip %s (%.2fs)", media.name, duration)
                 else:
+                    if visual_cues and image_idx < len(visual_cues):
+                        cue_start = max(0.0, visual_cues[image_idx])
+                        if cue_start > current_start:
+                            current_start = cue_start
                     if image_duration_plan:
                         planned = image_duration_plan[image_idx] if image_idx < len(image_duration_plan) else image_duration_plan[-1]
                         duration = min(planned, remaining)
@@ -724,6 +752,10 @@ class VideoComposer:
             if placeholder:
                 ph_clip = ImageClip(str(placeholder))
                 ph_clip = self._apply_duration(ph_clip, audio_duration or 1.0)
+                try:
+                    ph_clip = self.apply_ken_burns(ph_clip)
+                except Exception as kb_exc:
+                    self.logger.warning("Ken Burns skipped for placeholder (primary): %s", kb_exc)
                 clip_list = [ph_clip]
             else:
                 ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
@@ -746,6 +778,10 @@ class VideoComposer:
             if placeholder:
                 ph_clip = ImageClip(str(placeholder))
                 ph_clip = self._apply_duration(ph_clip, audio_duration or clip_list[0].duration or 1.0)
+                try:
+                    ph_clip = self.apply_ken_burns(ph_clip)
+                except Exception as kb_exc:
+                    self.logger.warning("Ken Burns skipped for placeholder (solid-only): %s", kb_exc)
                 clip_list = [ph_clip]
             else:
                 ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
@@ -783,6 +819,11 @@ class VideoComposer:
             self.logger.error("CRITICAL: Audio failed to attach to video!")
             raise RuntimeError("Failed to attach audio to video. Audio track is None.")
         final = attached_clip
+        # Clamp minimum pixel values slightly above black to prevent blank-frame flags
+        try:
+            final = final.fl_image(lambda frame: np.clip(frame, 16, 255))
+        except Exception as clamp_exc:  # pragma: no cover - defensive
+            self.logger.warning("Luma clamp skipped: %s", clamp_exc)
 
         if final.audio is None:
             self.logger.error("CRITICAL: Audio failed to attach to video!")
@@ -1285,6 +1326,10 @@ class VideoComposer:
             array = np.array(image)
             clip = ImageClip(array)
             clip = self._apply_duration(clip, duration)
+            try:
+                clip = self.apply_ken_burns(clip)
+            except Exception as kb_exc:
+                self.logger.warning("Ken Burns skipped for slide clip: %s", kb_exc)
             fade_window = min(0.8, duration / 3)
             # MoviePy 2.0: use with_effects instead of fx()
             clip = clip.fx(vfx.fadein, fade_window).fx(vfx.fadeout, fade_window)

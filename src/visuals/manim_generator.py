@@ -16,6 +16,9 @@ from ..utils import RunPaths, Settings, get_logger
 
 
 HEBREW_FONT = "Arial"  # Default Hebrew-compatible font for generated scenes
+AZURE = "#1E6DE0"
+CONCRETE_WHITE = "#F4F5F7"
+SOFT_TEAL = "#4DC1B6"
 
 @dataclass
 class ManimSceneGenerator:
@@ -76,12 +79,15 @@ class ManimSceneGenerator:
 You are a Manim expert. Write a Python script using Manim Community v0.18.
 - Create a class named {class_name} that inherits from Scene.
 - Visualize the following concept in Hebrew annotations: {scene_description}
-- Use simple geometric primitives, VGroup arrangements, and animations (Create, FadeIn, Arrow).
-- Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Paragraph fonts.
-- Add an rtl(text: str) helper that uses arabic_reshaper + bidi.get_display to render Hebrew RTL safely; every displayed string must pass through rtl(...).
-- All Text/Paragraph instances must set font=HEBREW_FONT and wrap the string with rtl(...).
-- Make sure every scene includes at least two self.wait() calls (minimum 1 second each): one after the main animation and one before ending, to avoid blank/green frames.
-- Return only valid Python code.
+- Style: high-end 3D-feel using flat primitives (no photos), color palette AZURE/CONCRETE_WHITE/SOFT_TEAL, clean edges.
+- Motion: every element enters ONLY with Create/Write/FadeInFrom (no bare add anywhere); include a subtle background float/pulse (e.g., Rectangle or VGroup oscillating 3-5px up/down over 6s) with rate_func=smootherstep so something always moves softly during dialogue.
+- Add a slow camera-like dolly (use self.play with frame shifting or scaled background) to keep motion persistent.
+- Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Paragraph fonts; also constants AZURE, CONCRETE_WHITE, SOFT_TEAL.
+- Add an rtl(text: str) helper that uses arabic_reshaper + bidi.get_display to render Hebrew RTL safely; every displayed string must pass through rtl(...). Align text RIGHT. Use Assistant or Alef font variants when available.
+- All Text/Paragraph instances must set font=HEBREW_FONT, color=AZURE or SOFT_TEAL for accents, and wrap the string with rtl(...).
+- Scene safety: begin construct() with self.wait(1.5) and end with self.wait(1.5) to avoid blank frames; include at least one additional self.wait() during the sequence.
+- Ensure backgrounds are lightly tinted (CONCRETE_WHITE) so there are no black/blank frames; never leave the canvas empty.
+- Return only valid Python code (no markdown fences).
 """.strip()
         response = self._chat_completion(prompt, max_tokens=900)
         code = response.choices[0].message.content or ""
