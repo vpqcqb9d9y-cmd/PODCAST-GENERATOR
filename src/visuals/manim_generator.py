@@ -83,7 +83,10 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
 - Motion: every element enters ONLY with Create/Write/FadeInFrom (no bare add anywhere); include a subtle background float/pulse (e.g., Rectangle or VGroup oscillating 3-5px up/down over 6s) with rate_func=smootherstep so something always moves softly during dialogue.
 - Add a slow camera-like dolly; if camera frame access differs by Manim version, fall back to shifting mobjects or background layers—avoid `self.camera.frame` when unavailable.
 - Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Paragraph fonts; also constants AZURE, CONCRETE_WHITE, SOFT_TEAL.
-- Add an rtl(text: str) helper that uses arabic_reshaper + bidi.get_display to render Hebrew RTL safely; every displayed string must pass through rtl(...). Align text RIGHT. Use Assistant or Alef font variants when available.
+- Add an rtl(text: str) helper that uses arabic_reshaper.reshape + bidi.get_display (call get_display(reshape(text))) to render Hebrew RTL safely; every displayed string must pass through rtl(...). Align text RIGHT. Use Assistant or Sans-Serif font variants when available.
+- Hard requirement: inside construct(), set self.camera.background_opacity = 0 for transparent background; ensure imports include: from bidi.algorithm import get_display and from arabic_reshaper import reshape.
+- RTL requirement: All Hebrew text must flow through get_display(reshape(text)) before rendering.
+- Text requirement: Use Text with a Hebrew-capable font (e.g., font="Assistant" or font="Sans-Serif") for all text objects.
 - All Text/Paragraph instances must set font=HEBREW_FONT, color=AZURE or SOFT_TEAL for accents, and wrap the string with rtl(...).
 - Scene safety: begin construct() with self.wait(1.5) and end with self.wait(1.5) to avoid blank frames; include at least one additional self.wait() during the sequence.
 - Ensure backgrounds are lightly tinted (CONCRETE_WHITE) so there are no black/blank frames; never leave the canvas empty.
@@ -137,11 +140,12 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
             except ValueError as exc:
                 self.logger.warning("Skipping %s: %s", scene_file.name, exc)
                 continue
-            output_name = scene_file.with_suffix(".mp4").name
+            output_name = scene_file.with_suffix(".mov").name
             scene_path = scene_file.resolve()
             media_dir = scenes_directory / "media"
             cmd = base_cmd + [
                 "-qm",
+                "--transparent",
                 "--media_dir",
                 str(media_dir),
                 "-o",

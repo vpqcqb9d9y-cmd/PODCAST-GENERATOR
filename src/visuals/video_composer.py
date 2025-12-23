@@ -602,6 +602,27 @@ class VideoComposer:
         last_image_clip: Optional[VideoClip] = None
         image_idx = 0
 
+        def _build_image_clip(path: Path, duration: float) -> VideoClip:
+            from PIL import Image as PILImage
+
+            img = PILImage.open(str(path))
+            img_width, img_height = img.size
+            video_width, video_height = 1920, 1080
+            ratio = min(video_width / img_width, video_height / img_height)
+            new_width = int(img_width * ratio)
+            new_height = int(img_height * ratio)
+            img = img.resize((new_width, new_height), PILImage.LANCZOS)
+            bg = PILImage.new("RGB", (video_width, video_height), (0, 0, 0))
+            x = (video_width - new_width) // 2
+            y = (video_height - new_height) // 2
+            bg.paste(img, (x, y))
+            img_array = np.array(bg)
+            clip = ImageClip(img_array)
+            clip = self._apply_duration(clip, duration)
+            if apply_ken_burns:
+                clip = self.apply_ken_burns(clip)
+            return clip
+
         for asset_type, media in ordered_assets:
             remaining = max(total_duration - current_start, 0.0)
             if remaining <= 0:
@@ -609,13 +630,39 @@ class VideoComposer:
 
             try:
                 if asset_type == "video":
-                    clip = VideoFileClip(str(media))
-                    duration = getattr(clip, "duration", 0.0) or 0.0
+                    fg_clip = VideoFileClip(str(media), has_mask=True)
+                    duration = getattr(fg_clip, "duration", 0.0) or 0.0
+                    if duration <= 0:
+                        self.logger.warning("Video %s has zero duration; skipping.", media.name)
+                        fg_clip.close()
+                        continue
                     if duration > remaining:
                         duration = remaining
-                        clip = clip.subclipped(0, duration)
-                    clip = self._apply_start(clip, current_start)
-                    self.logger.info("Added video clip %s (%.2fs)", media.name, duration)
+                        fg_clip = fg_clip.subclipped(0, duration)
+
+                    bg_path: Optional[Path] = None
+                    if image_idx < len(image_files):
+                        bg_path = image_files[image_idx]
+                        image_idx += 1
+                    elif image_files:
+                        bg_path = image_files[-1]
+
+                    if bg_path:
+                        try:
+                            bg_clip = _build_image_clip(bg_path, duration)
+                        except Exception as img_err:
+                            self.logger.warning("Background image failed (%s): %s", bg_path.name, img_err, exc_info=True)
+                            bg_clip = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=duration)
+                    else:
+                        bg_clip = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=duration)
+
+                    fg_clip = self._apply_start(fg_clip, 0)
+                    bg_clip = self._apply_start(bg_clip, 0)
+                    composite = CompositeVideoClip([bg_clip, fg_clip], size=(1920, 1080))
+                    composite = self._apply_duration(composite, duration)
+                    composite = self._apply_start(composite, current_start)
+                    self.logger.info("Added composited video %s over background (%.2fs)", media.name, duration)
+                    clip = composite
                 else:
                     if visual_cues and image_idx < len(visual_cues):
                         cue_start = max(0.0, visual_cues[image_idx])
@@ -627,27 +674,10 @@ class VideoComposer:
                     else:
                         duration = min(per_image_duration if per_image_duration > 0 else remaining, remaining)
                     try:
-                        from PIL import Image
-
-                        img = Image.open(str(media))
-                        img_width, img_height = img.size
-                        video_width, video_height = 1920, 1080
-                        ratio = min(video_width / img_width, video_height / img_height)
-                        new_width = int(img_width * ratio)
-                        new_height = int(img_height * ratio)
-                        img = img.resize((new_width, new_height), Image.LANCZOS)
-                        bg = Image.new("RGB", (video_width, video_height), (0, 0, 0))
-                        x = (video_width - new_width) // 2
-                        y = (video_height - new_height) // 2
-                        bg.paste(img, (x, y))
-                        img_array = np.array(bg)
-                        clip = ImageClip(img_array)
-                        clip = self._apply_duration(clip, duration)
-                        if apply_ken_burns:
-                            clip = self.apply_ken_burns(clip)
+                        clip = _build_image_clip(media, duration)
                         clip = self._apply_start(clip, current_start)
                         self.logger.info(
-                            "Added image clip %s (%.2fs) - resized to %dx%d", media.name, duration, new_width, new_height
+                            "Added image clip %s (%.2fs)", media.name, duration
                         )
                     except Exception as img_err:
                         self.logger.warning(
