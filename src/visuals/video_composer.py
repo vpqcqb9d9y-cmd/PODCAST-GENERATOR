@@ -9,6 +9,8 @@ import tempfile
 import time
 import subprocess
 import random
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -805,9 +807,13 @@ class VideoComposer:
                 self.logger.info("Falling back to MoviePy SubtitlesClip overlay.")
 
                 def _text_factory(txt: str) -> TextClip:
-                    # Text in SRT is already shaped for RTL at generation time; avoid double shaping/shrinking.
+                    try:
+                        shaped = arabic_reshaper.reshape(txt)
+                        bidi_text = get_display(shaped)
+                    except Exception:
+                        bidi_text = txt
                     return TextClip(
-                        txt,
+                        bidi_text,
                         fontsize=45,
                         font="Arial",
                         color="white",

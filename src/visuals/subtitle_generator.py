@@ -4,9 +4,6 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 import re
 
-import arabic_reshaper
-from bidi.algorithm import get_display
-
 
 def _format_ts(seconds: float) -> str:
     hrs = int(seconds // 3600)
@@ -136,67 +133,95 @@ def generate_srt_from_dialogue(
         return output_path
 
     durations: List[float]
-    if segment_durations:
-        durations = [max(0.01, float(d or 0.0)) for d in segment_durations]
+    has_segments = bool(segment_durations)
+    if has_segments:
+        durations = [max(0.01, float(d or 0.0)) for d in segment_durations or []]
         if len(durations) < len(turns):
             durations.extend([0.5] * (len(turns) - len(durations)))
-        speech_window = sum(durations)
     else:
         speech_window = max(0.0, total_duration - lead_in_seconds - outro_seconds)
         durations = _compute_durations(turns, speech_window)
 
     entries: List[str] = []
     cursor = lead_in_seconds
-    audio_limit = total_duration if total_duration > 0 else lead_in_seconds + speech_window
-    if outro_seconds > 0 and total_duration > 0:
-        audio_limit = max(0.0, total_duration - outro_seconds)
-    latest_end_allowed = lead_in_seconds + speech_window if speech_window > 0 else audio_limit
-    latest_end_allowed = min(latest_end_allowed, audio_limit) if audio_limit > 0 else latest_end_allowed
     entry_index = 1
 
-    for (turn_idx, text), dur in zip(turns, durations):
-        if cursor >= latest_end_allowed:
-            break
+    if has_segments:
+        for (_, text), dur in zip(turns, durations):
+            if dur <= 0:
+                dur = 0.01
 
-        chunks = _split_turn_text(text, max_words=10, max_chars=80)
-        if not chunks:
-            continue
-
-        # Duration split per chunk based on word weight
-        word_counts = [max(1, len(c.split())) for c in chunks]
-        total_words = sum(word_counts) or len(chunks)
-        raw_allocations = [dur * (wc / total_words) for wc in word_counts]
-
-        # Enforce a minimal duration and fix rounding drift on the last chunk
-        min_chunk = 0.3
-        chunk_durations: List[float] = []
-        for alloc in raw_allocations:
-            chunk_durations.append(max(min_chunk, alloc))
-
-        drift = dur - sum(chunk_durations)
-        if chunk_durations:
-            chunk_durations[-1] = max(min_chunk, chunk_durations[-1] + drift)
-
-        for chunk_text, chunk_dur in zip(chunks, chunk_durations):
-            if cursor >= latest_end_allowed:
-                break
-            start = min(cursor, latest_end_allowed)
-            end = min(cursor + chunk_dur, latest_end_allowed)
-            if end <= start:
+            chunks = _split_turn_text(text, max_words=10, max_chars=80)
+            if not chunks:
+                cursor += dur
                 continue
 
-            # Shape RTL text exactly once at SRT creation time
-            shaped = arabic_reshaper.reshape(chunk_text)
-            bidi_text = get_display(shaped)
+            word_counts = [max(1, len(c.split())) for c in chunks]
+            total_words = sum(word_counts) or len(chunks)
+            raw_allocations = [dur * (wc / total_words) for wc in word_counts]
 
-            entries.append(
-                f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{bidi_text}\n"
-            )
-            entry_index += 1
-            cursor = end
+            min_chunk = 0.3
+            chunk_durations: List[float] = [max(min_chunk, alloc) for alloc in raw_allocations]
+            drift = dur - sum(chunk_durations)
+            if chunk_durations:
+                chunk_durations[-1] = max(min_chunk, chunk_durations[-1] + drift)
 
-        # Protect against overruns in cases where durations were very small
-        cursor = min(cursor, latest_end_allowed)
+            chunk_cursor = cursor
+            for chunk_text, chunk_dur in zip(chunks, chunk_durations):
+                start = chunk_cursor
+                end = chunk_cursor + chunk_dur
+                if end <= start:
+                    continue
+
+                entries.append(
+                    f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{chunk_text}\n"
+                )
+                entry_index += 1
+                chunk_cursor = end
+
+            # Advance cursor strictly by the provided segment duration to keep contiguous timing
+            cursor += dur
+    else:
+        speech_window = max(0.0, total_duration - lead_in_seconds - outro_seconds)
+        audio_limit = total_duration if total_duration > 0 else lead_in_seconds + speech_window
+        if outro_seconds > 0 and total_duration > 0:
+            audio_limit = max(0.0, total_duration - outro_seconds)
+        latest_end_allowed = lead_in_seconds + speech_window if speech_window > 0 else audio_limit
+        latest_end_allowed = min(latest_end_allowed, audio_limit) if audio_limit > 0 else latest_end_allowed
+
+        for (_, text), dur in zip(turns, durations):
+            if cursor >= latest_end_allowed:
+                break
+
+            chunks = _split_turn_text(text, max_words=10, max_chars=80)
+            if not chunks:
+                continue
+
+            word_counts = [max(1, len(c.split())) for c in chunks]
+            total_words = sum(word_counts) or len(chunks)
+            raw_allocations = [dur * (wc / total_words) for wc in word_counts]
+
+            min_chunk = 0.3
+            chunk_durations: List[float] = [max(min_chunk, alloc) for alloc in raw_allocations]
+            drift = dur - sum(chunk_durations)
+            if chunk_durations:
+                chunk_durations[-1] = max(min_chunk, chunk_durations[-1] + drift)
+
+            for chunk_text, chunk_dur in zip(chunks, chunk_durations):
+                if cursor >= latest_end_allowed:
+                    break
+                start = min(cursor, latest_end_allowed)
+                end = min(cursor + chunk_dur, latest_end_allowed)
+                if end <= start:
+                    continue
+
+                entries.append(
+                    f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{chunk_text}\n"
+                )
+                entry_index += 1
+                cursor = end
+
+            cursor = min(cursor, latest_end_allowed)
 
     output_path.write_text("\n".join(entries), encoding="utf-8")
     return output_path
