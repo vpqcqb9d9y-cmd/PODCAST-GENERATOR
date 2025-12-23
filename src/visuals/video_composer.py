@@ -346,6 +346,8 @@ class VideoComposer:
         asset_paths: Optional[List[Path]] = None,
         adaptive_timeline: bool = False,
         apply_ken_burns: bool = True,
+        segment_durations: Optional[List[float]] = None,
+        lead_in_seconds: float = 0.0,
     ) -> List[VideoClip]:
         """
         Build video timeline aligned with the final audio.
@@ -363,6 +365,16 @@ class VideoComposer:
             if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end > start:
                 turn_durations.append(float(end - start))
         has_aligned_timings = bool(turn_durations) and len(turn_durations) == turn_count
+
+        provided_turn_durations: List[float] = []
+        if segment_durations:
+            provided_turn_durations = [max(0.01, float(d or 0.0)) for d in segment_durations]
+            if len(provided_turn_durations) < turn_count:
+                provided_turn_durations.extend([0.5] * (turn_count - len(provided_turn_durations)))
+            provided_turn_durations = provided_turn_durations[:turn_count]
+            has_aligned_timings = len(provided_turn_durations) == turn_count
+
+        effective_turn_durations: List[float] = provided_turn_durations or (turn_durations if has_aligned_timings else [])
 
         # More robust file detection
         video_files: List[Path] = []
@@ -532,10 +544,39 @@ class VideoComposer:
             max(remaining_for_images / image_count, self.MIN_IMAGE_DURATION) if image_count > 0 else 0.0
         )
 
+        image_duration_plan: List[float] = []
+        if image_count > 0 and effective_turn_durations:
+            turns_len = len(effective_turn_durations)
+            if image_count == turns_len:
+                image_duration_plan = list(effective_turn_durations)
+                if image_duration_plan:
+                    image_duration_plan[0] += max(0.0, lead_in_seconds)
+            else:
+                # Partition dialogue turns into contiguous groups for each image
+                boundaries = [int(round(i * turns_len / image_count)) for i in range(image_count + 1)]
+                boundaries[0] = 0
+                boundaries[-1] = turns_len
+                for i in range(1, len(boundaries)):
+                    boundaries[i] = min(turns_len, max(boundaries[i], boundaries[i - 1]))
+
+                grouped: List[float] = []
+                for i in range(image_count):
+                    start_idx = boundaries[i]
+                    end_idx = boundaries[i + 1]
+                    if end_idx <= start_idx:
+                        end_idx = min(turns_len, start_idx + 1)
+                    segment_sum = sum(effective_turn_durations[start_idx:end_idx]) if start_idx < turns_len else 0.0
+                    if i == 0:
+                        segment_sum += max(0.0, lead_in_seconds)
+                    grouped.append(max(0.01, segment_sum))
+
+                image_duration_plan = grouped
+
         clips: List[VideoClip] = []
         current_start = 0.0
         last_image_index: Optional[int] = None
         last_image_clip: Optional[VideoClip] = None
+        image_idx = 0
 
         for asset_type, media in ordered_assets:
             remaining = max(total_duration - current_start, 0.0)
@@ -552,7 +593,11 @@ class VideoComposer:
                     clip = self._apply_start(clip, current_start)
                     self.logger.info("Added video clip %s (%.2fs)", media.name, duration)
                 else:
-                    duration = min(per_image_duration if per_image_duration > 0 else remaining, remaining)
+                    if image_duration_plan:
+                        planned = image_duration_plan[image_idx] if image_idx < len(image_duration_plan) else image_duration_plan[-1]
+                        duration = min(planned, remaining)
+                    else:
+                        duration = min(per_image_duration if per_image_duration > 0 else remaining, remaining)
                     try:
                         from PIL import Image
 
@@ -612,6 +657,7 @@ class VideoComposer:
                 if asset_type == "image":
                     last_image_index = len(clips) - 1
                     last_image_clip = clip
+                    image_idx += 1
                 current_start += getattr(clip, "duration", 0.0) or 0.0
             except Exception as e:
                 self.logger.error("Failed to process asset %s: %s", media.name, e, exc_info=True)
@@ -1011,6 +1057,8 @@ class VideoComposer:
                 asset_paths=asset_paths,
                 adaptive_timeline=adaptive_timeline,
                 apply_ken_burns=apply_ken_burns,
+                segment_durations=segment_durations,
+                lead_in_seconds=lead_in_seconds,
             )
         except Exception as exc:
             self.logger.error(
