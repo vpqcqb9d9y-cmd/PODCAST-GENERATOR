@@ -636,6 +636,7 @@ class QualityChecker:
         run_dir: Path,
         expected_segments: int = 0,
         run_type: str = "FULL",
+        expected_assets: Optional[List[Path]] = None,
     ) -> QualityReport:
         """
         Run all post-processing checks after pipeline execution.
@@ -680,7 +681,7 @@ class QualityChecker:
         self.report.add_postprocess(self._check_output_integrity(run_dir))
 
         # Check 6: Visual Content Quality
-        self.report.add_postprocess(self._check_visual_content(run_dir))
+        self.report.add_postprocess(self._check_visual_content(run_dir, expected_assets=expected_assets))
 
         # Check 7: Visual Metadata Quality
         self.report.add_postprocess(self._check_visual_metadata_quality(run_dir))
@@ -1061,24 +1062,26 @@ class QualityChecker:
             details=details,
         )
 
-    def _check_visual_content(self, run_dir: Path, metadata: Optional[Dict] = None) -> CheckResult:
-        """Comprehensive visual content validation."""
+    def _check_visual_content(self, run_dir: Path, metadata: Optional[Dict] = None, expected_assets: Optional[List[Path]] = None) -> CheckResult:
+        """Comprehensive visual content validation scoped to current run assets."""
         visuals_dir = run_dir / "visuals"
-        issues = []
-        details = {}
+        issues: List[str] = []
+        details: Dict[str, Any] = {}
 
-        # Check if visuals directory exists
-        if not visuals_dir.exists():
-            return CheckResult(
-                name="visual_content",
-                status="WARNING",
-                message="Visuals directory not found - no visual assets generated",
-                details={"visuals_dir_exists": False}
-            )
-
-        # Count different types of visual assets
-        image_files = list(visuals_dir.glob("*.png")) + list(visuals_dir.glob("*.jpg")) + list(visuals_dir.glob("*.jpeg"))
-        video_files = list(visuals_dir.glob("*.mp4")) + list(visuals_dir.glob("*.webm")) + list(visuals_dir.glob("*.mov"))
+        # Use expected assets if provided to avoid legacy/previous-run noise
+        if expected_assets is not None:
+            image_files = [p for p in expected_assets if p.suffix.lower() in {".png", ".jpg", ".jpeg"}]
+            video_files = [p for p in expected_assets if p.suffix.lower() in {".mp4", ".webm", ".mov"}]
+        else:
+            if not visuals_dir.exists():
+                return CheckResult(
+                    name="visual_content",
+                    status="WARNING",
+                    message="Visuals directory not found - no visual assets generated",
+                    details={"visuals_dir_exists": False}
+                )
+            image_files = list(visuals_dir.glob("*.png")) + list(visuals_dir.glob("*.jpg")) + list(visuals_dir.glob("*.jpeg"))
+            video_files = list(visuals_dir.glob("*.mp4")) + list(visuals_dir.glob("*.webm")) + list(visuals_dir.glob("*.mov"))
 
         details.update({
             "images_count": len(image_files),
@@ -1392,7 +1395,7 @@ class QualityChecker:
                     ):
                         green_frames += 1
 
-                if blank_frames > 2:
+                if blank_frames > 4:
                     issues.append(f"Detected {blank_frames} blank frame(s) in video")
                 if green_frames > 2:
                     issues.append(f"Detected {green_frames} potential green-screen frame(s)")

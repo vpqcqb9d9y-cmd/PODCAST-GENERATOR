@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+import json
 
 from pydub import AudioSegment
 
@@ -23,6 +24,8 @@ class GuardianResult:
     """Result of the guardian healing pass."""
 
     assets: List[Path]
+    manifest: List[Path]
+    manifest_path: Optional[Path] = None
     adaptive_timeline: bool = False
     ken_burns: bool = False
     audio_normalized: bool = False
@@ -87,8 +90,24 @@ class ProductionGuardian:
 
         audio_normalized = self._normalize_audio()
 
+        manifest_assets = sorted(set(valid_images + video_assets))
+
+        # Persist execution manifest for downstream consumers (deterministic asset list)
+        manifest_path = self.run_paths.run_dir / "execution_manifest.json"
+        try:
+            manifest_path.write_text(
+                json.dumps([str(p) for p in manifest_assets], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self.logger.info("Execution manifest written: %s", manifest_path.name)
+        except Exception as exc:
+            self.logger.warning("Failed to write execution manifest: %s", exc)
+            manifest_path = None
+
         return GuardianResult(
-            assets=sorted(set(valid_images + video_assets)),
+            assets=manifest_assets,
+            manifest=manifest_assets,
+            manifest_path=manifest_path,
             adaptive_timeline=adaptive,
             ken_burns=False,
             audio_normalized=audio_normalized,
@@ -114,8 +133,7 @@ class ProductionGuardian:
                     continue
                 size_kb = image_path.stat().st_size / 1024
                 if size_kb < 8:
-                    self.logger.warning("Discarding tiny image (%.1fKB): %s", size_kb, image_path.name)
-                    image_path.unlink(missing_ok=True)
+                    self.logger.warning("Skipping tiny image (%.1fKB): %s", size_kb, image_path.name)
                     continue
                 if cv2 is None:
                     valid.append(image_path)
@@ -136,17 +154,15 @@ class ProductionGuardian:
                 # Detect near-black/corrupt frames
                 mean_intensity = float(cv2.mean(img)[0])
                 if mean_intensity < 2.5:
-                    self.logger.warning("Discarding black frame: %s (mean=%.2f)", image_path.name, mean_intensity)
-                    image_path.unlink(missing_ok=True)
+                    self.logger.warning("Skipping black frame: %s (mean=%.2f)", image_path.name, mean_intensity)
                     continue
 
                 # Detect flat/empty frames (uniform gray) that can sneak through
                 std_intensity = float(np.std(img))
                 if std_intensity < 1.5:
                     self.logger.warning(
-                        "Discarding flat frame: %s (std=%.2f, mean=%.2f)", image_path.name, std_intensity, mean_intensity
+                        "Skipping flat frame: %s (std=%.2f, mean=%.2f)", image_path.name, std_intensity, mean_intensity
                     )
-                    image_path.unlink(missing_ok=True)
                     continue
 
                 valid.append(image_path)
@@ -196,9 +212,8 @@ class ProductionGuardian:
 
                 if all(m < 2.5 for m in means):
                     self.logger.warning(
-                        "Discarding likely black video: %s (sample means=%s)", video_path.name, [f"{m:.2f}" for m in means]
+                        "Skipping likely black video: %s (sample means=%s)", video_path.name, [f"{m:.2f}" for m in means]
                     )
-                    video_path.unlink(missing_ok=True)
                     continue
 
                 valid.append(video_path)

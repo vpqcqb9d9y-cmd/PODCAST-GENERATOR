@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar
@@ -9,8 +8,6 @@ import tempfile
 import time
 import subprocess
 import random
-import arabic_reshaper
-from bidi.algorithm import get_display
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -30,6 +27,7 @@ from moviepy.editor import (
 from moviepy.video.tools.subtitles import SubtitlesClip
 from ..utils import RunPaths, Settings, get_logger
 from .subtitle_generator import generate_srt_from_dialogue
+from ..utils.text_utils import shape_rtl
 
 
 T = TypeVar("T")
@@ -136,9 +134,9 @@ class VideoComposer:
             if concepts:
                 concept_text = concepts[(start_index + idx - 1) % len(concepts)]
 
-            headline = "תמונת פלייסהולדר"
-            subline = f"{topic}" if topic else "תוכן חזותי"
-            caption = concept_text or "ויזואל זמני עד ליצירת תמונה מותאמת"
+            headline = shape_rtl("תמונת פלייסהולדר")
+            subline = shape_rtl(f"{topic}" if topic else "תוכן חזותי")
+            caption = shape_rtl(concept_text or "ויזואל זמני עד ליצירת תמונה מותאמת")
 
             draw.text((120, 200), headline, font=font_title, fill=(255, 255, 255))
             draw.text((120, 320), subline, font=font_body, fill=(240, 240, 240))
@@ -1089,33 +1087,6 @@ class VideoComposer:
         lead_in_seconds: float = 0.0,
         outro_seconds: float = 0.0,
     ) -> Path:
-        # In production mode, block rendering if only placeholders are present
-        if not getattr(self.settings, "preview_mode", False):
-            visuals_dir = getattr(run_paths, "visuals_dir", None)
-            if visuals_dir and visuals_dir.exists():
-                placeholders = list(visuals_dir.glob("placeholder_*.png"))
-                real_assets = [
-                    p for p in visuals_dir.glob("*")
-                    if p.suffix.lower() in self.IMAGE_EXTENSIONS and not p.name.startswith("placeholder_")
-                ]
-                if placeholders and not real_assets:
-                    message = (
-                        "Placeholder visuals detected with no real assets. "
-                        "Aborting render (preview_mode is disabled)."
-                    )
-                    self.logger.error(message)
-                    if hasattr(run_paths, "log"):
-                        run_paths.log(message)
-                    raise RuntimeError(message)
-        # AGGRESSIVE CLEANUP: If image_01.png exists, DELETE placeholder_01.png
-        run_dir = run_paths.run_dir
-        for i in range(1, 20):
-            real = list(run_dir.glob(f"image_{i:02d}_*.png")) + list(run_dir.glob(f"image_{i:02d}_*.jpg"))
-            placeholder = run_dir / f"placeholder_{i:02d}.png"
-            if real and placeholder.exists():
-                print(f"🔥 DESTROYING {placeholder.name} because real image exists")
-                os.remove(placeholder)
-
         start = time.perf_counter()
         try:
             clips = self.create_timeline(
@@ -1403,11 +1374,14 @@ class VideoComposer:
         draw = ImageDraw.Draw(background)
 
         title_y = card_bounds[1] + (20 if hero else 60)
-        draw.text((card_bounds[0] + 60, title_y), title, font=font_title, fill=theme["text"])
-        if subtitle:
+        rtl_title = shape_rtl(title)
+        rtl_subtitle = shape_rtl(subtitle) if subtitle else ""
+
+        draw.text((card_bounds[0] + 60, title_y), rtl_title, font=font_title, fill=theme["text"])
+        if rtl_subtitle:
             draw.text(
                 (card_bounds[0] + 60, title_y + 80),
-                subtitle,
+                rtl_subtitle,
                 font=font_body,
                 fill=theme["muted"],
             )
@@ -1432,7 +1406,7 @@ class VideoComposer:
                 continue
             wrapped = self._wrap_text(bullet, font_body, bullet_width)
             for line in wrapped:
-                draw.text((card_bounds[0] + 110, y), line, font=font_body, fill=theme["text"])
+                draw.text((card_bounds[0] + 110, y), shape_rtl(line), font=font_body, fill=theme["text"])
                 y += line_height
             y += 12
             if y > card_bounds[3] - 200:
@@ -1444,6 +1418,7 @@ class VideoComposer:
             if not chip:
                 continue
             text = chip if len(chip) <= 48 else f"{chip[:45]}..."
+            text = shape_rtl(text)
             text_width = self._measure_text(text, font_body) + 60
             chip_rect = (chip_x, chip_y, chip_x + text_width, chip_y + 54)
             draw.rounded_rectangle(chip_rect, radius=22, fill=theme["chip_bg"])
@@ -1453,7 +1428,7 @@ class VideoComposer:
                 chip_x = card_bounds[0] + 110
                 chip_y -= 70
 
-        progress_label = f"{int(progress * 100):02d}% הושלם"
+        progress_label = shape_rtl(f"{int(progress * 100):02d}% הושלם")
         draw.text(
             (card_bounds[2] - 260, card_bounds[3] - 90),
             progress_label,
@@ -1487,7 +1462,7 @@ class VideoComposer:
         background = Image.alpha_composite(background, panel)
         draw = ImageDraw.Draw(background)
 
-        draw.text((card_bounds[0] + 60, card_bounds[1] + 40), title, font=font_title, fill=theme["text"])
+        draw.text((card_bounds[0] + 60, card_bounds[1] + 40), shape_rtl(title), font=font_title, fill=theme["text"])
         column_count = max(len(blocks), 1)
         available_width = card_bounds[2] - card_bounds[0] - 120
         column_width = (available_width - (column_count - 1) * 30) / column_count
@@ -1509,11 +1484,11 @@ class VideoComposer:
 
             speaker = block.get("speaker") or "Speaker"
             snippet = (block.get("text") or "").strip()
-            draw.text((x0 + 40, card_top + 30), speaker, font=font_body, fill=theme["text"])
+            draw.text((x0 + 40, card_top + 30), shape_rtl(speaker), font=font_body, fill=theme["text"])
             snippet_lines = self._wrap_text(snippet, font_body, int(column_width) - 80)
             text_y = card_top + 90
             for line in snippet_lines[:8]:
-                draw.text((x0 + 40, text_y), line, font=font_body, fill=theme["muted"])
+                draw.text((x0 + 40, text_y), shape_rtl(line), font=font_body, fill=theme["muted"])
                 text_y += getattr(font_body, "size", 32) + 6
 
         self._draw_progress_bar(draw, card_bounds, theme, progress)

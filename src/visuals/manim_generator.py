@@ -81,15 +81,14 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
 - Visualize the following concept in Hebrew annotations: {scene_description}
 - Style: high-end 3D-feel using flat primitives (no photos), color palette AZURE/CONCRETE_WHITE/SOFT_TEAL, clean edges.
 - Motion: every element enters ONLY with Create/Write/FadeInFrom (no bare add anywhere); include a subtle background float/pulse (e.g., Rectangle or VGroup oscillating 3-5px up/down over 6s) with rate_func=smootherstep so something always moves softly during dialogue.
-- Add a slow camera-like dolly; if camera frame access differs by Manim version, fall back to shifting mobjects or background layers—avoid `self.camera.frame` when unavailable.
+- Do NOT use self.camera.frame; instead move mobjects/background layers for camera-like motion to stay compatible with v0.18.
 - Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Paragraph fonts; also constants AZURE, CONCRETE_WHITE, SOFT_TEAL.
 - Add an rtl(text: str) helper that uses arabic_reshaper.reshape + bidi.get_display (call get_display(reshape(text))) to render Hebrew RTL safely; every displayed string must pass through rtl(...). Align text RIGHT. Use Assistant or Sans-Serif font variants when available.
-- Hard requirement: inside construct(), set self.camera.background_opacity = 0 for transparent background; ensure imports include: from bidi.algorithm import get_display and from arabic_reshaper import reshape.
+- Background requirement: use a lightly tinted backdrop (CONCRETE_WHITE with subtle opacity) so there are no black/blank frames; avoid transparent backgrounds.
 - RTL requirement: All Hebrew text must flow through get_display(reshape(text)) before rendering.
 - Text requirement: Use Text with a Hebrew-capable font (e.g., font="Assistant" or font="Sans-Serif") for all text objects.
 - All Text/Paragraph instances must set font=HEBREW_FONT, color=AZURE or SOFT_TEAL for accents, and wrap the string with rtl(...).
 - Scene safety: begin construct() with self.wait(1.5) and end with self.wait(1.5) to avoid blank frames; include at least one additional self.wait() during the sequence.
-- Ensure backgrounds are lightly tinted (CONCRETE_WHITE) so there are no black/blank frames; never leave the canvas empty.
 - Use frame dimensions via config.frame_width and config.frame_height (or define these values explicitly in the script) instead of relying on global FRAME_WIDTH/FRAME_HEIGHT constants.
 - Append a comment line "# END OF SCENE" at the very end of the file to confirm code completion.
 - Return only valid Python code (no markdown fences).
@@ -116,23 +115,23 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
 
     def render_scenes(self, scenes_directory: Path) -> List[Path]:
         """
-        Execute Manim for each scene file.
-        Uses `manim` CLI if on PATH, otherwise falls back to `python -m manim`
-        (still requires manim to be importable in the current environment).
+        Execute Manim for each scene file using deterministic output paths.
         """
         outputs: List[Path] = []
         manim_exec = shutil.which("manim")
         if manim_exec:
             base_cmd = [manim_exec]
         else:
-            # Fallback: try module invocation
             try:
                 import manim  # noqa: F401
                 base_cmd = [sys.executable, "-m", "manim"]
                 self.logger.info("Manim not on PATH; using module fallback via python -m manim")
-            except Exception:
-                self.logger.warning("Manim CLI not found and module import failed; skipping animation rendering.")
+            except Exception as exc:
+                self.logger.warning("Manim CLI not available: %s", exc)
                 raise RuntimeError("Manim CLI not available in PATH")
+
+        media_dir = scenes_directory / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
 
         for scene_file in scenes_directory.glob("*.py"):
             try:
@@ -140,58 +139,44 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
             except ValueError as exc:
                 self.logger.warning("Skipping %s: %s", scene_file.name, exc)
                 continue
-            output_name = scene_file.with_suffix(".mov").name
-            scene_path = scene_file.resolve()
-            media_dir = scenes_directory / "media"
+
+            output_file = f"{class_name}.mp4"
+            expected_output = media_dir / "videos" / class_name / "720p30" / output_file
+            expected_output.parent.mkdir(parents=True, exist_ok=True)
+
             cmd = base_cmd + [
                 "-qm",
-                "--transparent",
                 "--media_dir",
                 str(media_dir),
                 "-o",
-                output_name,
-                str(scene_path),
+                output_file,
+                str(scene_file.resolve()),
                 class_name,
             ]
-            self.logger.info("Rendering %s", scene_file.name)
+
+            self.logger.info("Rendering %s -> %s", scene_file.name, expected_output)
             try:
                 subprocess.run(cmd, check=True)
-            except FileNotFoundError:
-                self.logger.warning("Manim executable not found during render.")
-                raise RuntimeError("Manim executable not found during render")
+            except FileNotFoundError as exc:
+                self.logger.error("Manim executable not found: %s", exc)
+                raise RuntimeError("Manim executable not found during render") from exc
             except subprocess.CalledProcessError as exc:
                 self.logger.error("Manim failed for %s: %s", scene_file.name, exc)
                 continue
 
-            # Manim writes into media/videos/<scene>/<quality>/<file>.mp4; move it next to scenes
-            scene_output = scenes_directory / output_name
+            scene_output = expected_output
             if not scene_output.exists():
-                media_root = scenes_directory / "media" / "videos"
-                candidates = list(media_root.rglob(output_name)) if media_root.exists() else []
-                if candidates:
-                    source = max(candidates, key=lambda p: p.stat().st_mtime)
-                    try:
-                        scene_output.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(str(source), scene_output)
-                        self.logger.info("Moved Manim output from %s to %s", source, scene_output)
-                    except Exception as move_exc:
-                        self.logger.error("Failed to move Manim output %s -> %s: %s", source, scene_output, move_exc)
-                        continue
-                else:
-                    self.logger.warning(
-                        "Manim output not found for %s (looked in %s)", output_name, media_root
-                    )
-                    continue
+                self.logger.error("Expected Manim output missing: %s", scene_output)
+                continue
+
             try:
                 self.validate_scene_output(scene_output)
-                outputs.append(scene_output)
             except Exception as exc:
                 self.logger.error("Scene validation failed for %s: %s", scene_file.name, exc)
-                if scene_output.exists():
-                    try:
-                        scene_output.unlink()
-                    except OSError:
-                        pass
+                continue
+
+            outputs.append(scene_output)
+
         return outputs
 
     def _load_cv2(self):

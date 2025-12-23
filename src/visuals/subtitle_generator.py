@@ -4,10 +4,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 import re
 
-# BiDi isolation markers (avoid LTR fragments flipping surrounding RTL)
-LRI = "\u2066"  # left-to-right isolate
-PDI = "\u2069"  # pop directional isolate
-RLM = "\u200f"  # right-to-left mark
+from ..utils.text_utils import shape_rtl
 
 
 def _format_ts(seconds: float) -> str:
@@ -112,32 +109,9 @@ def _split_turn_text(
 
 def fix_rtl_text(text: str) -> str:
     """
-    Prepare logical-order RTL text with BiDi isolation (no reversal/shaping).
-
-    - Keeps logical order; no get_display/arabic_reshaper/[::-1].
-    - Wraps LTR spans (English/numbers/model names) with LRI/PDI.
-    - Anchors trailing punctuation (. ! ?) to the RTL side with RLM.
+    Centralized RTL shaping using text_utils.shape_rtl.
     """
-    if not text:
-        return ""
-
-    # Isolate embedded LTR segments to avoid reordering issues
-    def _isolate_ltr_spans(value: str) -> str:
-        def wrap(match: re.Match[str]) -> str:
-            segment = match.group(0)
-            return f"{LRI}{segment}{PDI}"
-
-        # Heuristic: English letters, numbers, and common token characters
-        return re.sub(r"[A-Za-z0-9][A-Za-z0-9\-\+\/&_.]*", wrap, value)
-
-    # Ensure trailing punctuation stays on the RTL side
-    def _anchor_punctuation(value: str) -> str:
-        if value and value[-1] in {"!", "?", "."}:
-            return f"{value}{RLM}"
-        return value
-
-    processed = _anchor_punctuation(_isolate_ltr_spans(text))
-    return processed
+    return shape_rtl(text, add_isolates=True)
 
 
 def generate_srt_from_dialogue(

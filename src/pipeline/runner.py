@@ -463,34 +463,11 @@ class LecturePipeline:
                     )
 
                 if refreshed_meta and refreshed_meta.get("images"):
-                    # Preserve curated prompts but top-up/truncate to requested count
-                    base_images = list(visual_metadata.get("images", [])) if visual_metadata else []
-                    new_images = refreshed_meta.get("images", [])
-                    combined: List[Dict] = []
-
-                    # Keep existing order up to desired count
-                    for img in base_images:
-                        combined.append(img)
-                        if len(combined) >= desired_image_count:
-                            break
-
-                    next_index = len(combined) + 1
-                    for img in new_images:
-                        if len(combined) >= desired_image_count:
-                            break
-                        clone = dict(img)
-                        clone["index"] = next_index
-                        combined.append(clone)
-                        next_index += 1
-
-                    visual_metadata = visual_metadata or {}
-                    visual_metadata["images"] = combined[:desired_image_count]
-                    if refreshed_meta.get("video"):
-                        visual_metadata["video"] = refreshed_meta.get("video")
-                    if refreshed_meta.get("background") and not visual_metadata.get("background"):
-                        visual_metadata["background"] = refreshed_meta.get("background")
-                    if refreshed_meta.get("general_notes") and not visual_metadata.get("general_notes"):
-                        visual_metadata["general_notes"] = refreshed_meta.get("general_notes")
+                    visual_metadata = self._merge_visual_metadata(
+                        existing=visual_metadata or {},
+                        regenerated=refreshed_meta,
+                        desired_count=desired_image_count,
+                    )
 
                     target_visual_path = run_paths.run_dir / "visual_metadata.json"
                     try:
@@ -602,6 +579,7 @@ class LecturePipeline:
                 visual_metadata_logged = True
             
             # Stage 5: Video composition (optional)
+            execution_assets: List[Path] = []
             if self.settings.enable_visuals and not skip_visuals:
                 stage_start = time.time()
                 run_paths.log("Starting video composition.")
@@ -694,7 +672,12 @@ class LecturePipeline:
                 
                 if use_manim:
                     run_paths.log("🎬 Rendering Video (Manim)...")
-                    scene_paths = self.manim.build_scenes(dialogue_json, run_paths)
+                    try:
+                        scene_paths = self.manim.build_scenes(dialogue_json, run_paths)
+                    except Exception as manim_exc:
+                        scene_paths = []
+                        self.logger.warning("[LecturePipeline.run] Manim generation failed: %s", manim_exc, exc_info=True)
+                        run_paths.log(f"Manim generation failed, continuing with fallback: {manim_exc}")
                     if not scene_paths:
                         self.logger.info("[LecturePipeline.run] No Manim scenes generated")
                 
@@ -725,20 +708,7 @@ class LecturePipeline:
                     extra_assets=base_assets,
                 )
 
-                # Merge guardian-vetted assets with raw AI/Manim outputs (dedup)
-                merged_assets: List[Path] = []
-                ordered_sources = list(base_assets) + [a for a in guardian_result.assets if a not in base_assets]
-                for asset in ordered_sources:
-                    if not asset:
-                        continue
-                    try:
-                        resolved = asset.resolve()
-                    except Exception:
-                        resolved = asset
-                    if resolved.exists() and resolved not in merged_assets:
-                        merged_assets.append(resolved)
-
-                optimized_assets = merged_assets
+                optimized_assets = guardian_result.manifest
                 run_paths.log(f"Visual assets prepared for composition: {len(optimized_assets)} item(s).")
                 try:
                     self.logger.info(
@@ -752,6 +722,7 @@ class LecturePipeline:
                     run_paths.log("ProductionGuardian: Adaptive timeline enabled (stretching available visuals).")
                 if guardian_result.audio_normalized:
                     run_paths.log("ProductionGuardian: Audio normalized to safe loudness.")
+                execution_assets = optimized_assets
 
                 # Compose final video
                 try:
@@ -844,6 +815,7 @@ class LecturePipeline:
                 run_dir=run_paths.run_dir,
                 expected_segments=expected_segments,
                 run_type=run_type,
+                expected_assets=execution_assets or None,
             )
             
             # Log postprocess results
@@ -1032,6 +1004,42 @@ class LecturePipeline:
         except Exception:
             return 5
 
+    def _merge_visual_metadata(
+        self,
+        existing: Dict,
+        regenerated: Dict,
+        desired_count: int,
+    ) -> Dict:
+        """
+        Append or truncate images to desired_count without overwriting curated fields.
+        """
+        merged = dict(existing)
+        base_images = list(existing.get("images", [])) if existing else []
+        new_images = regenerated.get("images", []) if regenerated else []
+
+        combined: List[Dict] = []
+        for img in base_images:
+            combined.append(img)
+            if len(combined) >= desired_count:
+                break
+
+        next_index = len(combined) + 1
+        for img in new_images:
+            if len(combined) >= desired_count:
+                break
+            clone = dict(img)
+            clone.setdefault("index", next_index)
+            combined.append(clone)
+            next_index += 1
+
+        merged["images"] = combined[:desired_count]
+
+        for key in ("video", "background", "general_notes"):
+            if key not in merged and regenerated.get(key) is not None:
+                merged[key] = regenerated.get(key)
+
+        return merged
+
     def _refresh_visual_metadata_if_needed(
         self,
         visual_metadata: Dict,
@@ -1080,11 +1088,11 @@ class LecturePipeline:
             self.logger.warning("[LecturePipeline] Regenerated visual metadata is empty; keeping existing prompts.")
             return None
 
-        merged_images = (existing_images + [img for img in new_images if img not in existing_images])[
-            :requested_images
-        ]
-        refreshed = {**visual_metadata, **regenerated}
-        refreshed["images"] = merged_images
+        refreshed = self._merge_visual_metadata(
+            existing=visual_metadata,
+            regenerated={"images": new_images, **{k: v for k, v in (regenerated or {}).items() if k != "images"}},
+            desired_count=requested_images,
+        )
 
         target_path = run_paths.run_dir / "visual_metadata.json"
         try:
