@@ -81,15 +81,17 @@ You are a Manim expert. Write a Python script using Manim Community v0.18.
 - Visualize the following concept in Hebrew annotations: {scene_description}
 - Style: high-end 3D-feel using flat primitives (no photos), color palette AZURE/CONCRETE_WHITE/SOFT_TEAL, clean edges.
 - Motion: every element enters ONLY with Create/Write/FadeInFrom (no bare add anywhere); include a subtle background float/pulse (e.g., Rectangle or VGroup oscillating 3-5px up/down over 6s) with rate_func=smootherstep so something always moves softly during dialogue.
-- Add a slow camera-like dolly (use self.play with frame shifting or scaled background) to keep motion persistent.
+- Add a slow camera-like dolly; if camera frame access differs by Manim version, fall back to shifting mobjects or background layers—avoid `self.camera.frame` when unavailable.
 - Include a module-level constant HEBREW_FONT = "{HEBREW_FONT}" and use it for all Text/Paragraph fonts; also constants AZURE, CONCRETE_WHITE, SOFT_TEAL.
 - Add an rtl(text: str) helper that uses arabic_reshaper + bidi.get_display to render Hebrew RTL safely; every displayed string must pass through rtl(...). Align text RIGHT. Use Assistant or Alef font variants when available.
 - All Text/Paragraph instances must set font=HEBREW_FONT, color=AZURE or SOFT_TEAL for accents, and wrap the string with rtl(...).
 - Scene safety: begin construct() with self.wait(1.5) and end with self.wait(1.5) to avoid blank frames; include at least one additional self.wait() during the sequence.
 - Ensure backgrounds are lightly tinted (CONCRETE_WHITE) so there are no black/blank frames; never leave the canvas empty.
+- Use frame dimensions via config.frame_width and config.frame_height (or define these values explicitly in the script) instead of relying on global FRAME_WIDTH/FRAME_HEIGHT constants.
+- Append a comment line "# END OF SCENE" at the very end of the file to confirm code completion.
 - Return only valid Python code (no markdown fences).
 """.strip()
-        response = self._chat_completion(prompt, max_tokens=900)
+        response = self._chat_completion(prompt, max_tokens=1500)
         code = response.choices[0].message.content or ""
         # Strip markdown code fences if present
         code = self._strip_code_fences(code)
