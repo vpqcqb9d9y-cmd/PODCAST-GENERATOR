@@ -4,15 +4,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 import re
 
-try:
-    import arabic_reshaper  # type: ignore
-    from bidi.algorithm import get_display  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    arabic_reshaper = None
-    get_display = None
-
 # BiDi isolation markers (avoid LTR fragments flipping surrounding RTL)
-RLI = "\u2067"  # right-to-left isolate
 LRI = "\u2066"  # left-to-right isolate
 PDI = "\u2069"  # pop directional isolate
 RLM = "\u200f"  # right-to-left mark
@@ -120,12 +112,11 @@ def _split_turn_text(
 
 def fix_rtl_text(text: str) -> str:
     """
-    Apply BiDi shaping so mixed Hebrew/English and punctuation render correctly.
+    Prepare logical-order RTL text with BiDi isolation (no reversal/shaping).
 
-    - Uses arabic_reshaper + python-bidi when available.
-    - Isolates LTR spans (English/numbers) to prevent them from pulling RTL text.
-    - Anchors trailing punctuation to the RTL side.
-    - Provides a best-effort fallback when shaping libraries are absent.
+    - Keeps logical order; no get_display/arabic_reshaper/[::-1].
+    - Wraps LTR spans (English/numbers/model names) with LRI/PDI.
+    - Anchors trailing punctuation (. ! ?) to the RTL side with RLM.
     """
     if not text:
         return ""
@@ -141,30 +132,12 @@ def fix_rtl_text(text: str) -> str:
 
     # Ensure trailing punctuation stays on the RTL side
     def _anchor_punctuation(value: str) -> str:
-        if value and value[-1] in {"!", "?", ".", ","}:
+        if value and value[-1] in {"!", "?", "."}:
             return f"{value}{RLM}"
         return value
 
     processed = _anchor_punctuation(_isolate_ltr_spans(text))
-
-    shaped = processed
-    if arabic_reshaper is not None:
-        try:
-            shaped = arabic_reshaper.reshape(processed)
-        except Exception:
-            shaped = processed
-
-    if get_display is not None:
-        try:
-            return get_display(shaped, base_dir="R")
-        except Exception:
-            return shaped
-
-    # Fallback: inject RLM to keep punctuation RTL; basic reverse as last resort
-    try:
-        return shaped[::-1]
-    except Exception:
-        return shaped
+    return processed
 
 
 def generate_srt_from_dialogue(

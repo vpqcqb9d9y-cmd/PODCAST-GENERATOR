@@ -940,8 +940,9 @@ class VideoComposer:
         """
         srt_path_resolved = srt_path.resolve()
         srt_for_ffmpeg = srt_path_resolved.as_posix().replace("\\", "/").replace(":", r"\:")
+        # Use libass subtitles filter with a Hebrew-compatible font; keep UTF-8 markers.
         filter_style = (
-            "subtitles='{srt}':force_style="
+            "subtitles='{srt}':charenc=UTF-8:force_style="
             "'FontName=Arial,FontSize=20,Alignment=2,WrapStyle=2,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
             "BackColour=&H80000000,BorderStyle=4,Outline=1,Shadow=0,MarginV=48'"
         ).format(srt=srt_for_ffmpeg)
