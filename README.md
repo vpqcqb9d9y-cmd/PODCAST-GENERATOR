@@ -2,10 +2,14 @@
 
 Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
 
-> **Current version: v3.4.4** | **Build date: 2025-12-23**  
+> **Current version: v3.4.5** | **Build date: 2025-12-23**  
 > Hebrew guide: see [`README.he.md`](README.he.md)
 
 ---
+
+## Hotfix 3.4.5
+- **BiDi polish**: Stronger RTL/LTR isolation (LRI/PDI + RLM) for mixed Hebrew/English captions; test clip guidance added.
+- **Docs**: Added bilingual user guides covering every panel/button (see `docs/USER_GUIDE.md` and `docs/USER_GUIDE.he.md`).
 
 ## Hotfix 3.4.3
 - **Exact subtitle timing**: SRTs now anchor to real TTS segment durations (per WAV) instead of word-weighted heuristics, removing drift between speakers/engines.
@@ -30,6 +34,7 @@ Transform long-form Hebrew lectures into concise, studio-grade podcasts and expl
 ## Technical Notes
 - **RTL/BiDi-safe captions**: Captions apply LRI/PDI isolation for embedded English/number tokens and append RLM for trailing punctuation so Hebrew mixed with English (e.g., “Microsoft 365”, “IT”) renders in the correct visual order. Shaping uses arabic-reshaper + python-bidi when available; fallback keeps isolation and punctuation anchoring for standard SRT players.
 - **BiDi visual check**: Test string “שלום! ברוכים הבאים ל-Microsoft 365, זה עובד?” is used for quick visual verification (sample clip can be rendered to `outputs/tests/rtl_bidi_test.mp4`).
+- **User guides (EN/HE)**: See `docs/USER_GUIDE.md` and `docs/USER_GUIDE.he.md` for a full walkthrough of panels, buttons, and pipeline switches.
 
 ## Installation
 1. **Prerequisites**
