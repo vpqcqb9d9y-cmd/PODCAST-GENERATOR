@@ -2273,6 +2273,16 @@ class PodcastGeneratorWindow(QMainWindow):
             payload = {}
         self.current_metadata = self.chat_session.export_metadata()
         self._update_metadata_preview()
+
+        # Surface a concise summary + key concepts to the chat so the user sees the main points.
+        summary_text = self.current_metadata.get("summary") or ""
+        key_concepts = self.current_metadata.get("key_concepts") or []
+        if summary_text:
+            concepts_part = ""
+            if key_concepts:
+                concepts_part = "\n\nמושגים מרכזיים: " + ", ".join(key_concepts[:5])
+            self._append_chat_bubble(APP_ASSISTANT_NAME, f"סיכום אוטומטי מהתמלול:\n{summary_text}{concepts_part}")
+
         for key in ("assistant", "bilingual_hint"):
             message = payload.get(key)
             if message:
