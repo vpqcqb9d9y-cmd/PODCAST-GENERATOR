@@ -2,10 +2,143 @@
 
 Transform long-form Hebrew lectures into concise, studio-grade podcasts and explainer videos. Inspired by Google NotebookLM, built with PyQt6 and a hybrid Manim/Google AI visuals stack.
 
-> **Current version: v3.4.5** | **Build date: 2025-12-23**  
+> **Current version: v3.4.6** | **Build date: 2025-12-27**  
 > Hebrew guide: see [`README.he.md`](README.he.md)
 
 ---
+
+## Architecture Overview
+
+The pipeline transforms transcripts into podcasts through a well-defined sequence of stages:
+
+```
+┌─────────────────┐
+│ Transcript File │
+│  + Metadata JSON│
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ DialogueGenerator      │
+│ (src/dialogue/         │
+│  generator.py)         │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ dialogue.json          │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ create_tts_synthesizer │
+│ (src/audio/__init__.py) │
+│                         │
+│  ┌──────────────────┐  │
+│  │ SpeechSynthesizer│  │
+│  │ (src/audio/tts.py)│  │
+│  └──────────────────┘  │
+│  ┌──────────────────┐  │
+│  │ElevenLabsSpeech  │  │
+│  │(elevenlabs_tts.py)│  │
+│  └──────────────────┘  │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ segments + durations    │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ PodcastStitcher         │
+│ (src/audio/stitcher.py) │
+└────────┬───────────────┘
+         │
+         ├─────────────────┐
+         │                 │
+         ▼                 ▼
+┌─────────────────┐ ┌──────────────────┐
+│ final_audio.mp3│ │ metadata.json     │
+└────────┬────────┘ │ (with timing)     │
+         │          └──────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ subtitle_generator.py   │
+│ (segment_durations)     │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ VideoComposer           │
+│ (src/visuals/           │
+│  video_composer.py)     │
+│                         │
+│ Inputs:                 │
+│  • final_audio.mp3      │
+│  • metadata.json        │
+│  • subtitle data        │
+│  • visual assets        │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ final_video.mp4         │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ QualityChecker          │
+│ (src/utils/             │
+│  quality_checker.py)    │
+│                         │
+│ Inputs:                 │
+│  • final_video.mp4      │
+│  • final_audio.mp3      │
+│  • metadata.json        │
+└────────┬───────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ quality_report.json     │
+└─────────────────────────┘
+```
+
+### Key Components
+
+| Stage | Responsibility | Key Modules |
+|-------|---------------|-------------|
+| **Dialogue Generation** | Chunk raw transcript, summarize, craft JSON dialogue | `src/dialogue/chunker.py`, `generator.py` |
+| **Speech Synthesis** | Azure TTS or ElevenLabs, dual voices, leveling, mixdown | `src/audio/tts.py`, `elevenlabs_tts.py`, `stitcher.py` |
+| **Subtitle Generation** | Generate SRT with exact timing from TTS segments | `src/visuals/subtitle_generator.py` |
+| **Visuals & Slides** | Manim animations, Google AI images/videos, slide composer, PPT export | `src/visuals/*.py`, `src/outputs/deck.py` |
+| **Video Composition** | Combine audio, visuals, and subtitles into final video | `src/visuals/video_composer.py` |
+| **Quality Checks** | Validate sync, metadata schema, visual content | `src/utils/quality_checker.py` |
+| **Pipeline Runner** | Orchestrates CLI/GUI runs, cost tracking, logging, sleep recovery | `src/pipeline/runner.py`, `src/gui/app.py` |
+
+### Timing Contract
+
+The pipeline maintains a consistent timing contract across all stages:
+
+- **mode**: `"preview"` | `"full"`
+- **segment_durations[]**: Exact TTS segment durations (per WAV file)
+- **lead_in_seconds**: Intro music duration
+- **outro_seconds**: Outro music duration
+- **audio_duration_seconds**: Measured from final audio file
+- **video_duration_seconds**: Measured from final video file
+- **timing_source**: `"tts"` | `"measured"` | `"mixed"`
+- **tts_provider**: `"azure"` | `"elevenlabs"`
+
+This contract is persisted in `metadata.json` and `quality_report.json` for validation and synchronization checks.
+
+---
+
+## Hotfix 3.4.6 (2025-12-27)
+- **Visual composition fixes**: Fixed Ken Burns effect crash (TypeError with crop function calls); all visual clips now normalized to 1920x1080 canvas to prevent small rectangles or inconsistent aspect ratios.
+- **Subtitle quality**: Increased FFmpeg subtitle bitrate (4500k base, 6000k max) and improved font rendering (FontSize 26, Outline 2, darker background) for better Hebrew readability in animations.
+- **Canvas normalization**: Added `_ensure_canvas()` method that enforces consistent 1920x1080 resolution for all clips (images, videos, placeholders, color fills) with proper centering and scaling.
+- **Timeline stability**: Fixed video composition to handle mixed visual asset types (images, videos, placeholders) with uniform canvas size, eliminating visual inconsistencies between intro/segments.
 
 ## Hotfix 3.4.5
 - **BiDi polish**: Stronger RTL/LTR isolation (LRI/PDI + RLM) for mixed Hebrew/English captions; test clip guidance added.
