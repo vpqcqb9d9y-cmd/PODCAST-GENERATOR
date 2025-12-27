@@ -2154,7 +2154,8 @@ class PodcastGeneratorWindow(QMainWindow):
                 absolute_path = path.expanduser().resolve()
             except OSError:
                 absolute_path = path
-            snippet = self._read_transcript_snippet(absolute_path, limit=4000)
+            # Provide a larger snippet for live chat so summaries reflect most of the transcript.
+            snippet = self._read_transcript_snippet(absolute_path, limit=48000)
             self.chat_session.attach_transcript(absolute_path, snippet)
             self.logger.debug("[Transcript] Synced to session: %s", absolute_path)
         else:
