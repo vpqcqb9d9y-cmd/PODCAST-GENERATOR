@@ -6,25 +6,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
-from langdetect import LangDetectException, detect
-
 from .logging import get_logger
+from .text_utils import analyze_language
 
 HEBREW_PATTERN = re.compile(r"[\u0590-\u05FF]")
 
 
 def detect_language(text: str) -> str:
-    """Return ISO language code (he/en) using heuristics + langdetect."""
-    if HEBREW_PATTERN.search(text):
-        return "he"
+    """
+    Return ISO language code (he/en) using robust ratios + langdetect fallback.
+
+    Keeps existing default-to-Hebrew behavior for empty/ambiguous input to
+    avoid breaking prior assumptions.
+    """
     snippet = text.strip()
     if not snippet:
         return "he"
-    try:
-        lang = detect(snippet)
-    except LangDetectException:
-        return "he"
-    return lang.split("-")[0]
+
+    result = analyze_language(snippet)
+    if result.primary != "unknown":
+        return result.primary
+    # Preserve legacy fallback
+    return "he"
 
 
 @dataclass(slots=True)

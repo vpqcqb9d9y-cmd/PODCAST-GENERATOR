@@ -11,7 +11,7 @@ import typer
 
 from src.pipeline import LecturePipeline
 from src.metadata import MetadataChatSession
-from src.utils import Settings, get_logger
+from src.utils import Settings, get_logger, analyze_language
 
 
 def _ensure_utf8_stdio() -> None:
@@ -90,10 +90,17 @@ def run(
         "--preview",
         help="Run in preview mode (first 5 sentences only).",
     ),
+    target_language: Optional[str] = typer.Option(
+        None,
+        "--target-language",
+        help="Preferred output language for dialogue/TTS/subtitles (he/en/auto). Default is auto-detect.",
+    ),
 ):
     """Entry point for the lecture-to-podcast pipeline."""
     logger = get_logger("CLI")
     settings = Settings.load()
+    transcript_text = transcript.read_text(encoding="utf-8")
+    lang_info = analyze_language(transcript_text)
     
     # Override settings from CLI args
     if skip_cache:
@@ -110,6 +117,31 @@ def run(
         settings = replace(settings, video_duration_seconds=video_duration, auto_video_duration=False)
     if preview:
         settings = replace(settings, preview_mode=True)
+
+    # Choose target language (prompt if mixed/English and not provided)
+    detected_default = lang_info.primary if lang_info.primary in ("he", "en") else "he"
+    chosen_language = target_language or ""
+    if chosen_language.lower() == "auto":
+        chosen_language = detected_default
+    if not chosen_language:
+        if lang_info.is_mixed or detected_default == "en":
+            prompt_text = (
+                f"Transcript detected as {lang_info.primary or 'unknown'} (mixed={lang_info.is_mixed}). "
+                "Choose target output language [he/en]"
+            )
+            chosen_language = typer.prompt(prompt_text, default=detected_default).strip().lower()
+        else:
+            chosen_language = detected_default
+    chosen_language = chosen_language.lower()
+    settings = replace(settings, target_language=chosen_language)
+    logger.info(
+        "Transcript language detected: primary=%s mixed=%s (he=%.3f, en=%.3f) -> target_language=%s",
+        lang_info.primary,
+        lang_info.is_mixed,
+        lang_info.hebrew_ratio,
+        lang_info.latin_ratio,
+        chosen_language,
+    )
 
     logger.info(
         "Starting pipeline with visuals=%s, generator=%s, export_ppt=%s, tts=%s, preview=%s, image_count=%s, video_duration=%s",

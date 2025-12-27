@@ -70,15 +70,21 @@ class SpeechSynthesizer:
         voice = self.voice_profile.get_voice(speaker, language)
         if not voice:
             # Prefer user-selected Azure default voice when available
-            fallback_voice = getattr(self.settings, "azure_default_voice", "") or self.VOICE_MAP.get(
-                speaker, self.VOICE_MAP["Roee"]
-            )
-            voice = fallback_voice
+            if language == "en":
+                voice = "en-US-JennyNeural"
+            else:
+                fallback_voice = getattr(self.settings, "azure_default_voice", "") or self.VOICE_MAP.get(
+                    speaker, self.VOICE_MAP["Roee"]
+                )
+                voice = fallback_voice
+
+        azure_lang = "en-US" if language == "en" else "he-IL"
+        self.speech_config.speech_synthesis_language = azure_lang
         self.speech_config.speech_synthesis_voice_name = voice
         audio_config = speechsdk.audio.AudioOutputConfig(filename=str(target))
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=self.speech_config, audio_config=audio_config)
 
-        ssml = self._build_ssml(voice, text)
+        ssml = self._build_ssml(voice, text, azure_lang)
         result = synthesizer.speak_ssml_async(ssml).get()
         if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
             cancellation_details = result.cancellation_details
@@ -92,9 +98,9 @@ class SpeechSynthesizer:
         self.logger.debug("Rendered segment %s for %s", target.name, speaker)
 
     @staticmethod
-    def _build_ssml(voice: str, text: str) -> str:
+    def _build_ssml(voice: str, text: str, azure_lang: str) -> str:
         return f"""
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="he-IL">
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{azure_lang}">
   <voice name="{voice}">
     <prosody rate="1.05" pitch="+2%">
       {text}

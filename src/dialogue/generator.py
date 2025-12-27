@@ -63,6 +63,10 @@ class DialogueGenerator:
         if self.cost_tracker is None:
             self.cost_tracker = CostTracker()
 
+    def _target_language(self) -> str:
+        lang = getattr(self.settings, "target_language", "") or ""
+        return "en" if str(lang).lower().startswith("en") else "he"
+
     def generate(
         self,
         transcript_text: str,
@@ -106,11 +110,19 @@ class DialogueGenerator:
             summary_prompt = [
                 {
                     "role": "system",
-                    "content": "אתה עוזר לימודי שמסכם הרצאות ותוכן לימודי בצורה תמציתית בעברית.",
+                    "content": (
+                        "You are a teaching assistant summarizing lectures concisely in English."
+                        if self._target_language() == "en"
+                        else "אתה עוזר לימודי שמסכם הרצאות ותוכן לימודי בצורה תמציתית בעברית."
+                    ),
                 },
                 {
                     "role": "user",
-                    "content": f"סכם את החלק {idx}/{len(chunks)} של ההרצאה, הדגש רעיונות מרכזיים, דוגמאות ונקודות מפתח:\n\n{chunk}",
+                    "content": (
+                        f"Summarize part {idx}/{len(chunks)} of the lecture, highlighting key ideas, examples, and takeaways:\n\n{chunk}"
+                        if self._target_language() == "en"
+                        else f"סכם את החלק {idx}/{len(chunks)} של ההרצאה, הדגש רעיונות מרכזיים, דוגמאות ונקודות מפתח:\n\n{chunk}"
+                    ),
                 },
             ]
             response = self._chat_completion(summary_prompt, 800)
@@ -137,7 +149,44 @@ class DialogueGenerator:
         # Generate appropriate dialogue structure
         dialogue_structure = self._generate_dialogue_structure(content_type, len(key_concepts))
 
-        prompt_body = f"""אתה יוצר פודקאסט חינוכי ידידותי בעברית שמתאים לכל סוג תוכן לימודי.
+        if self._target_language() == "en":
+            prompt_body = f"""You create a friendly educational podcast in English for any learning content.
+
+Content details:
+- Topic: {topic}
+- Content type: {content_type}
+- Key concepts: {", ".join(key_concepts[:5])}
+- Summary: {summary[:200] + "..." if len(summary) > 200 else summary}
+
+Dialogue style for {content_type}:
+{dialogue_structure}
+
+Explaining concepts:
+{concept_explanations}
+
+Source content:
+{condensed_transcript}
+
+General guidelines:
+- Write a natural English conversation between Roee (expert host) and Noa (curious learner).
+- Focus only on the provided content; avoid external information.
+- Explain concepts clearly with relevant examples.
+- Align tone to the content type (technical, business, science, creative, educational).
+- End with 3 key takeaways.
+
+Return JSON:
+{{
+  "dialogue": [{{"speaker": "Roee", "text": ""}}, ...],
+  "metadata": {{
+    "total_exchanges": <int>,
+    "estimated_duration_minutes": <number>,
+    "key_topics": [<string>, ...]
+  }}
+}}
+"""
+            system_prompt = "You are an expert at creating educational podcast dialogues in English for any content type."
+        else:
+            prompt_body = f"""אתה יוצר פודקאסט חינוכי ידידותי בעברית שמתאים לכל סוג תוכן לימודי.
 
 פרטי התוכן:
 - נושא: {topic}
@@ -171,9 +220,10 @@ class DialogueGenerator:
   }}
 }}
 """
+            system_prompt = "אתה מומחה ביצירת פודקאסטים חינוכיים בעברית לכל סוגי התכנים."
 
         return [
-            {"role": "system", "content": "אתה מומחה ביצירת פודקאסטים חינוכיים בעברית לכל סוגי התכנים."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_body.strip()}
         ]
 

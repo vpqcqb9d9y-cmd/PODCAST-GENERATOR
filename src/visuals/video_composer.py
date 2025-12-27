@@ -833,6 +833,7 @@ class VideoComposer:
                     segment_durations=segment_durations,
                     lead_in_seconds=lead_in_seconds,
                     outro_seconds=outro_seconds,
+                    target_language=getattr(self.settings, "target_language", None),
                 )
             except Exception as exc:
                 self.logger.error("Failed to write captions.srt: %s", exc)
@@ -921,10 +922,11 @@ class VideoComposer:
             if ffmpeg_burn_failed:
                 self.logger.info("Falling back to MoviePy SubtitlesClip overlay.")
 
+                target_language = getattr(self.settings, "target_language", "") or ""
                 from .subtitle_generator import fix_rtl_text
 
                 def _text_factory(txt: str) -> TextClip:
-                    bidi_text = fix_rtl_text(txt)
+                    bidi_text = txt if target_language.startswith("en") else fix_rtl_text(txt)
                     return TextClip(
                         bidi_text,
                         fontsize=45,
@@ -1046,6 +1048,7 @@ class VideoComposer:
         segment_durations: Optional[List[float]] = None,
         lead_in_seconds: float = 0.0,
         outro_seconds: float = 0.0,
+        target_language: Optional[str] = None,
     ) -> None:
         """
         Generate SRT captions, preferring exact TTS segment durations when provided.
@@ -1062,6 +1065,7 @@ class VideoComposer:
                 segment_durations=segment_durations,
                 lead_in_seconds=lead_in_seconds,
                 outro_seconds=outro_seconds,
+                target_language=target_language,
             )
             self.logger.info("captions.srt written with %d entries", len(turns))
         except Exception as exc:

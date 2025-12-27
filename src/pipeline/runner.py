@@ -11,7 +11,17 @@ from ..audio import PodcastStitcher, SpeechSynthesizer, create_tts_synthesizer
 from ..dialogue import DialogueGenerator
 from ..metadata import MetadataIngestor, MetadataChatSession
 from ..outputs import SlideDeckExporter, StoryExporter
-from ..utils import CostTracker, HistoryManager, RunPaths, Settings, VoiceProfileManager, get_logger, TimingContext, QualityChecker
+from ..utils import (
+    CostTracker,
+    HistoryManager,
+    RunPaths,
+    Settings,
+    VoiceProfileManager,
+    analyze_language,
+    get_logger,
+    TimingContext,
+    QualityChecker,
+)
 from ..utils.guardian import ProductionGuardian
 from ..utils.visual_metadata_builder import build_visual_metadata_locally, generate_universal_visual_metadata
 from ..visuals import ManimSceneGenerator, VideoComposer, GoogleAIVisualGenerator
@@ -161,6 +171,23 @@ class LecturePipeline:
             self.logger.error("[LecturePipeline.run] Failed to read metadata: %s", e)
             raise
         
+        lang_info = analyze_language(transcript_text)
+        lang_primary = lang_info.primary or "unknown"
+        lang_secondary = lang_info.secondary or ""
+        self.logger.info(
+            "[LecturePipeline.run] Transcript language detected: primary=%s, mixed=%s (he=%.3f, en=%.3f, detector=%s)",
+            lang_primary,
+            lang_info.is_mixed,
+            lang_info.hebrew_ratio,
+            lang_info.latin_ratio,
+            lang_info.detector,
+        )
+        try:
+            if not getattr(self.settings, "target_language", ""):
+                setattr(self.settings, "target_language", lang_primary)
+        except Exception:
+            pass
+        
         materials = materials or []
         urls = urls or []
         run_base = output_dir or self.settings.output_base_dir
@@ -199,6 +226,20 @@ class LecturePipeline:
             timing.checkpoint("metadata_seeding")
             
         run_paths = RunPaths(run_base, metadata.get("date", "unknown"), metadata.get("topic", "azure"))
+        run_paths.transcript_language = lang_primary
+        run_paths.transcript_language_secondary = lang_secondary
+        run_paths.transcript_is_mixed = bool(lang_info.is_mixed)
+        run_paths.transcript_hebrew_ratio = lang_info.hebrew_ratio
+        run_paths.transcript_latin_ratio = lang_info.latin_ratio
+        run_paths.transcript_language_detector = lang_info.detector
+
+        try:
+            run_paths.log(
+                f"Transcript language: primary={lang_primary}, mixed={lang_info.is_mixed}, "
+                f"he_ratio={lang_info.hebrew_ratio:.3f}, en_ratio={lang_info.latin_ratio:.3f}, detector={lang_info.detector}"
+            )
+        except Exception:
+            pass
         if effective_preview:
             # Use a unique filename to avoid clashes with media players locking the previous output
             run_paths.final_video_path = run_paths.run_dir / f"preview_{int(time.time())}.mp4"
@@ -1152,6 +1193,26 @@ class LecturePipeline:
             run_paths.log(f"Output audio: {run_paths.final_audio_path.name} ({audio_size:.2f} MB)")
         else:
             self.logger.warning("  Audio: NOT FOUND")
+        
+        target_lang = getattr(self.settings, "target_language", "")
+        self.logger.info(
+            "  Language: transcript=%s (mixed=%s he=%.3f en=%.3f detector=%s) target=%s",
+            run_paths.transcript_language or "unknown",
+            run_paths.transcript_is_mixed,
+            run_paths.transcript_hebrew_ratio,
+            run_paths.transcript_latin_ratio,
+            run_paths.transcript_language_detector or "n/a",
+            target_lang or "auto/detected",
+        )
+        try:
+            run_paths.log(
+                f"Language summary -> transcript={run_paths.transcript_language or 'unknown'} "
+                f"(mixed={run_paths.transcript_is_mixed}, he={run_paths.transcript_hebrew_ratio:.3f}, "
+                f"en={run_paths.transcript_latin_ratio:.3f}, detector={run_paths.transcript_language_detector or 'n/a'}) "
+                f"target={target_lang or 'auto/detected'}"
+            )
+        except Exception:
+            pass
         
         # Video output
         if run_paths.final_video_path.exists():

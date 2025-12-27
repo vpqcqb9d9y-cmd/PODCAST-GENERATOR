@@ -84,7 +84,7 @@ from PyQt6.QtWidgets import (
 from src.metadata import MetadataChatSession
 from src.metadata.chat import _default_metadata
 from src.outputs import NetworkMapExporter, SlideDeckExporter, StoryExporter
-from src.utils import HistoryManager, Settings, VoiceProfileManager, validate_history_entry_paths, get_valid_run_dir
+from src.utils import HistoryManager, Settings, VoiceProfileManager, validate_history_entry_paths, get_valid_run_dir, analyze_language
 from src.utils.storage import _slugify
 from src.audio.voice_manager import VoiceLabService
 
@@ -1924,8 +1924,8 @@ class PodcastGeneratorWindow(QMainWindow):
         # Check scroll position before adding
         scrollbar = self.chat_history.verticalScrollBar()
         # If scrollbar is maxed out or close to it, we should scroll to bottom
-        # Using a small tolerance (e.g. 20 pixels)
-        was_at_bottom = scrollbar.value() >= (scrollbar.maximum() - 20)
+        # Using a tolerance to handle momentum scroll
+        was_at_bottom = scrollbar.value() >= (scrollbar.maximum() - 60)
         
         item = QListWidgetItem(f"{speaker}: {text}")
         
@@ -1985,7 +1985,7 @@ class PodcastGeneratorWindow(QMainWindow):
             if hasattr(self, "chat_history") and self.chat_history:
                 # Check scroll position
                 scrollbar = self.chat_history.verticalScrollBar()
-                was_at_bottom = scrollbar.value() >= (scrollbar.maximum() - 20)
+                was_at_bottom = scrollbar.value() >= (scrollbar.maximum() - 60)
 
                 # Check if last item is already thinking (avoid duplicates)
                 count = self.chat_history.count()
@@ -2779,6 +2779,32 @@ class PodcastGeneratorWindow(QMainWindow):
             QMessageBox.warning(self, "שגיאות אימות", f"נמצאו בעיות:\n\n{error_msg}")
             return None
 
+        target_language = getattr(self.settings, "target_language", "") or ""
+        lang_info = None
+        try:
+            transcript_text = Path(transcript).read_text(encoding="utf-8")
+            lang_info = analyze_language(transcript_text)
+        except Exception as exc:
+            self.logger.warning("[_collect_command] Failed to analyze transcript language: %s", exc)
+        if lang_info:
+            detected_default = lang_info.primary if lang_info.primary in ("he", "en") else "he"
+            if target_language.lower() == "auto":
+                target_language = detected_default
+            if not target_language:
+                if lang_info.is_mixed or detected_default == "en":
+                    target_language = self._prompt_target_language(detected_default, lang_info.is_mixed)
+                else:
+                    target_language = detected_default
+            self.logger.info(
+                "[_collect_command] Transcript language detected primary=%s mixed=%s (he=%.3f en=%.3f) -> target_language=%s",
+                lang_info.primary,
+                lang_info.is_mixed,
+                lang_info.hebrew_ratio,
+                lang_info.latin_ratio,
+                target_language,
+            )
+            setattr(self.settings, "target_language", target_language)
+
         # Apply custom project name if provided
         if hasattr(self, "custom_project_name"):
             custom_name = self.custom_project_name.text().strip()
@@ -2873,6 +2899,11 @@ class PodcastGeneratorWindow(QMainWindow):
         self._log(f"Using image_count: {image_count}")  # Debug log
         if image_count:
             cmd.extend(["--image-count", str(image_count)])
+        
+        target_language = getattr(self.settings, "target_language", "")
+        if target_language:
+            cmd.extend(["--target-language", target_language])
+            self._append_log(f"שפת פלט נבחרת: {target_language}")
             
         if not getattr(self.settings, 'auto_video_duration', True):
             duration = getattr(self.settings, 'video_duration_seconds', 300.0)
@@ -3870,6 +3901,31 @@ class PodcastGeneratorWindow(QMainWindow):
 
     def _start_run_log(self) -> None:
         self.log_buffer = []
+
+    def _prompt_target_language(self, detected_primary: str, is_mixed: bool) -> str:
+        """
+        Prompt the user to choose target output language when transcript is EN/mixed.
+        """
+        default_label = "Auto (זיהוי אוטומטי)"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("בחירת שפה לפלט")
+        box.setText(
+            f"התמלול זוהה כ-{detected_primary or 'לא ידוע'} "
+            f"(מעורב={bool(is_mixed)}). בחרו שפה ראשית לקולות ולכתוביות."
+        )
+        auto_btn = box.addButton(default_label, QMessageBox.ButtonRole.YesRole)
+        he_btn = box.addButton("עברית", QMessageBox.ButtonRole.AcceptRole)
+        en_btn = box.addButton("English", QMessageBox.ButtonRole.ActionRole)
+        box.setDefaultButton(auto_btn)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked == he_btn:
+            return "he"
+        if clicked == en_btn:
+            return "en"
+        return detected_primary if detected_primary in ("he", "en") else "he"
 
     def _persist_run_context_to_history(self) -> None:
         """

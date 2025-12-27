@@ -36,6 +36,7 @@ class Settings:
         default_factory=lambda: Path(os.getenv("VOICE_PROFILES_PATH", "config/voice_profiles.json"))
     )
     default_voice_profile: str = field(default_factory=lambda: os.getenv("VOICE_PROFILES_DEFAULT", "classic"))
+    target_language: str = field(default_factory=lambda: os.getenv("TARGET_LANGUAGE", ""))
 
     monthly_tts_character_limit: int = field(default_factory=lambda: int(os.getenv("MONTHLY_TTS_CHARACTER_LIMIT", "500000")))
     monthly_openai_cost_limit: float = field(default_factory=lambda: float(os.getenv("MONTHLY_OPENAI_COST_LIMIT", "200.0")))
@@ -174,6 +175,7 @@ class Settings:
             default_tts_provider=os.getenv("DEFAULT_TTS_PROVIDER", "azure"),
             google_cloud_project=os.getenv("GOOGLE_CLOUD_PROJECT"),
             google_cloud_location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+            target_language=os.getenv("TARGET_LANGUAGE", ""),
         )
 
     def _load_ui_preferences(self) -> None:

@@ -121,6 +121,7 @@ def generate_srt_from_dialogue(
     segment_durations: Optional[Iterable[float]] = None,
     lead_in_seconds: float = 0.0,
     outro_seconds: float = 0.0,
+    target_language: Optional[str] = None,
 ) -> Path:
     """
     Create captions.srt aligned to the audio duration.
@@ -154,6 +155,7 @@ def generate_srt_from_dialogue(
     entries: List[str] = []
     cursor = lead_in_seconds
     entry_index = 1
+    lang = (target_language or "").lower()
 
     if has_segments:
         for (_, text), dur in zip(turns, durations):
@@ -181,7 +183,8 @@ def generate_srt_from_dialogue(
                 end = chunk_cursor + chunk_dur
                 if end <= start:
                     continue
-                visual_text = fix_rtl_text(chunk_text)
+                use_rtl = lang.startswith("he") or _HEBREW_RE.search(chunk_text)
+                visual_text = fix_rtl_text(chunk_text) if use_rtl else chunk_text
 
                 entries.append(
                     f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{visual_text}\n"
@@ -224,7 +227,8 @@ def generate_srt_from_dialogue(
                 end = min(cursor + chunk_dur, latest_end_allowed)
                 if end <= start:
                     continue
-                visual_text = fix_rtl_text(chunk_text)
+                use_rtl = lang.startswith("he") or _HEBREW_RE.search(chunk_text)
+                visual_text = fix_rtl_text(chunk_text) if use_rtl else chunk_text
 
                 entries.append(
                     f"{entry_index}\n{_format_ts(start)} --> {_format_ts(end)}\n{visual_text}\n"

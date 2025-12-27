@@ -139,6 +139,8 @@ This contract is persisted in `metadata.json` and `quality_report.json` for vali
 - **Subtitle quality**: Increased FFmpeg subtitle bitrate (4500k base, 6000k max) and improved font rendering (FontSize 26, Outline 2, darker background) for better Hebrew readability in animations.
 - **Canvas normalization**: Added `_ensure_canvas()` method that enforces consistent 1920x1080 resolution for all clips (images, videos, placeholders, color fills) with proper centering and scaling.
 - **Timeline stability**: Fixed video composition to handle mixed visual asset types (images, videos, placeholders) with uniform canvas size, eliminating visual inconsistencies between intro/segments.
+- **Language-aware pipeline**: Auto-detects Hebrew/English/mixed transcripts, prompts for target output language (CLI/GUI), switches dialogue/metadata prompts accordingly, and routes Azure TTS/subtitles per language while keeping RTL shaping only when needed.
+- **Workspace chat polish**: Smoother chat scrolling (wheel/trackpad, auto-scroll tolerance) with tuned scroll steps to keep live conversation readable in the center panel.
 
 ## Hotfix 3.4.5
 - **BiDi polish**: Stronger RTL/LTR isolation (LRI/PDI + RLM) for mixed Hebrew/English captions; test clip guidance added.

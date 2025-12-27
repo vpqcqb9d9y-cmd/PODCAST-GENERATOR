@@ -83,6 +83,12 @@ class RunPaths:
     base_dir: Path
     lecture_date: str
     topic: str
+    transcript_language: str = ""
+    transcript_language_secondary: str = ""
+    transcript_is_mixed: bool = False
+    transcript_hebrew_ratio: float = 0.0
+    transcript_latin_ratio: float = 0.0
+    transcript_language_detector: str = ""
 
     def __post_init__(self) -> None:
         topic_slug = _slugify(self.topic)

@@ -240,6 +240,10 @@ def _build_chat_card(
     parent.chat_history.setVerticalScrollMode(
         QAbstractItemView.ScrollMode.ScrollPerPixel
     )
+    v_scroll = parent.chat_history.verticalScrollBar()
+    if v_scroll:
+        v_scroll.setSingleStep(24)
+        v_scroll.setPageStep(240)
     # Minimal spacing so bubbles stick to the top without large gaps
     parent.chat_history.setSpacing(2)
     parent.chat_history.setResizeMode(QListView.ResizeMode.Adjust)

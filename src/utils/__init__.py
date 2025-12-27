@@ -13,6 +13,7 @@ from .logging import (
 )
 from .storage import RunPaths, validate_history_entry_paths, get_valid_run_dir
 from .voices import VoiceProfileManager, detect_language
+from .text_utils import analyze_language, LanguageDetection
 from .quality_checker import (
     QualityChecker,
     QualityReport,
@@ -34,6 +35,8 @@ __all__ = [
     "CostTracker",
     "VoiceProfileManager",
     "detect_language",
+    "analyze_language",
+    "LanguageDetection",
     "HistoryManager",
     "validate_history_entry_paths",
     "get_valid_run_dir",

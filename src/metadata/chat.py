@@ -180,6 +180,18 @@ class MetadataChatSession:
         self.transcript_path = path
         self.transcript_snippet = snippet.strip()
 
+    def _target_language(self) -> str:
+        lang = getattr(self.settings, "target_language", "") or ""
+        return "en" if str(lang).lower().startswith("en") else "he"
+
+    def _metadata_prompt_prefix(self) -> str:
+        if self._target_language() == "en":
+            return (
+                "You are a NotebookLM assistant that builds rich metadata in clear English, "
+                "including topic, date, summary, key concepts, labs, references, reading list, and call_to_action."
+            )
+        return self.settings.metadata_system_prompt
+
     def reset(self) -> None:
         """Deep reset of chat state and all attached context."""
         self.messages = []
@@ -232,13 +244,21 @@ class MetadataChatSession:
             return {}
 
         snippet = text[:6000]
-        prompt = (
-            f"{self.settings.metadata_system_prompt}\n\n"
-            "על בסיס התמלול הבא, בנה JSON מובנה עם שדות topic, summary, key_concepts, labs, "
-            "references, reading_list ו-call_to_action. כלול גם מענה ידידותי בעברית בשדה assistant שמסביר "
-            "כיצד כדאי להמשיך. אם חסר מידע, הצע שאלות המשך.\n\n"
-            f"תמלול:\n{snippet}"
-        )
+        if self._target_language() == "en":
+            instruction = (
+                "Based on the following transcript, return JSON with fields: topic, summary, key_concepts, labs, "
+                "references, reading_list, and call_to_action. Include a friendly English reply in the 'assistant' "
+                "field that explains next steps. If information is missing, suggest follow-up questions.\n\n"
+            )
+            label = "Transcript"
+        else:
+            instruction = (
+                "על בסיס התמלול הבא, בנה JSON מובנה עם שדות topic, summary, key_concepts, labs, "
+                "references, reading_list ו-call_to_action. כלול גם מענה ידידותי בעברית בשדה assistant שמסביר "
+                "כיצד כדאי להמשיך. אם חסר מידע, הצע שאלות המשך.\n\n"
+            )
+            label = "תמלול"
+        prompt = f"{self._metadata_prompt_prefix()}\n\n{instruction}{label}:\n{snippet}"
         model_choice = self._pick_model("gemini")
         assistant_text, metadata_patch = self._invoke_model(model_choice, prompt)
         if metadata_patch:
@@ -248,9 +268,10 @@ class MetadataChatSession:
             self.messages.append(ChatMessage("assistant", assistant_text, model_choice))
         bilingual_hint = None
         if self._detect_bilingual(text):
-            bilingual_hint = (
-                "שמתי לב שהתמלול משלב עברית ואנגלית. תרצה לבחור שפה ראשית לתוצרים ולקולות?"
-            )
+            if self._target_language() == "en":
+                bilingual_hint = "The transcript mixes Hebrew and English. Do you want to choose a primary output language?"
+            else:
+                bilingual_hint = "שמתי לב שהתמלול משלב עברית ואנגלית. תרצה לבחור שפה ראשית לתוצרים ולקולות?"
             self.messages.append(ChatMessage("assistant", bilingual_hint, model_choice))
         result["bilingual_hint"] = bilingual_hint
         return result
@@ -494,8 +515,39 @@ class MetadataChatSession:
         raise RuntimeError("No AI providers configured. Set GEMINI_API_KEY or Azure credentials.")
 
     def _compose_user_payload(self, user_text: str) -> str:
-        materials_section = "\n".join(f"- {path.name}" for path in self.materials) or "לא הועלו קבצים"
-        urls_section = "\n".join(f"- {url}" for url in self.urls) or "אין קישורים"
+        materials_section = "\n".join(f"- {path.name}" for path in self.materials)
+        urls_section = "\n".join(f"- {url}" for url in self.urls)
+        lang = self._target_language()
+        if lang == "en":
+            materials_section = materials_section or "No attached files"
+            urls_section = urls_section or "No URLs"
+            transcript_label = "Transcript"
+            metadata_label = "Existing metadata"
+            context_label = "Context:\n"
+            attachments_label = "* Attachments:\n"
+            urls_label = "* URLs:\n"
+            instructions_label = "Instructions:\n"
+            user_label = "User message:\n"
+            instructions = (
+                "- Reply like a friendly NotebookLM assistant and offer insights/follow-up questions.\n"
+                "- Return valid JSON with two fields: assistant (your full reply) and metadata (patch only the fields that need updates).\n"
+                "- Use English by default; keep terms in their original language if needed.\n\n"
+            )
+        else:
+            materials_section = materials_section or "לא הועלו קבצים"
+            urls_section = urls_section or "אין קישורים"
+            transcript_label = "תמלול פעיל"
+            metadata_label = "מטא-דאטה קיים"
+            context_label = "הקשר נוסף:\n"
+            attachments_label = "* קבצים מצורפים:\n"
+            urls_label = "* קישורים:\n"
+            instructions_label = "הנחיות:\n"
+            user_label = "הודעת המשתמש:\n"
+            instructions = (
+                "- ענה כמו עוזר NotebookLM ידידותי, והצע תובנות/שאלות המשך.\n"
+                "- החזר JSON תקין עם שני שדות: assistant (תשובתך באריכות) ו-metadata (עדכון לכל אחד מהשדות במידת הצורך).\n"
+                "- השתמש בעברית ברורה; עבור מונחים באנגלית אפשר להשאיר באנגלית.\n\n"
+            )
         metadata_snapshot = json.dumps(self.current_metadata, ensure_ascii=False, indent=2)
         transcript_section = "אין תמלול מצורף"
         if self.transcript_path or self.transcript_snippet:
@@ -509,17 +561,15 @@ class MetadataChatSession:
                 parts.append(f"קטע מהתמלול:\n{preview}")
             transcript_section = "\n".join(parts)
         return (
-            f"{self.settings.metadata_system_prompt}\n\n"
-            "הקשר נוסף:\n"
-            f"* קבצים מצורפים:\n{materials_section}\n"
-            f"* קישורים:\n{urls_section}\n"
-            f"* תמלול פעיל:\n{transcript_section}\n"
-            f"* מטא-דאטה קיים:\n{metadata_snapshot}\n\n"
-            "הנחיות:\n"
-            "- ענה כמו עוזר NotebookLM ידידותי, והצע תובנות/שאלות המשך.\n"
-            "- החזר JSON תקין עם שני שדות: assistant (תשובתך באריכות) ו-metadata (עדכון לכל אחד מהשדות במידת הצורך).\n"
-            "- השתמש בעברית ברורה; עבור מונחים באנגלית אפשר להשאיר באנגלית.\n\n"
-            f"הודעת המשתמש:\n{user_text.strip()}"
+            f"{self._metadata_prompt_prefix()}\n\n"
+            + context_label
+            + f"{attachments_label}{materials_section}\n"
+            + f"{urls_label}{urls_section}\n"
+            + f"* {transcript_label}:\n{transcript_section}\n"
+            + f"* {metadata_label}:\n{metadata_snapshot}\n\n"
+            + instructions_label
+            + instructions
+            + f"{user_label}{user_text.strip()}"
         )
 
     def _invoke_model(self, model_choice: str, prompt: str) -> Tuple[str, Dict]:
@@ -542,7 +592,7 @@ class MetadataChatSession:
         return assistant_text, metadata_patch
 
     def _build_azure_messages(self, prompt: str) -> List[Dict[str, str]]:
-        history = [{"role": "system", "content": self.settings.metadata_system_prompt}]
+        history = [{"role": "system", "content": self._metadata_prompt_prefix()}]
         for msg in self.messages[-6:]:
             if msg.role in {"user", "assistant"}:
                 history.append({"role": msg.role, "content": msg.content})
