@@ -20,11 +20,11 @@ from src.utils.pricing import PRICING
 # Application Identity
 # =============================================================================
 
-APP_VERSION = "3.4.0"
+APP_VERSION = "3.4.6"
 """Current application version."""
 
-APP_BUILD_DATE = "2025-12-12"
-"""Build date for this version (v3.4.0)."""
+APP_BUILD_DATE = "2025-12-27"
+"""Build date for this version (v3.4.6)."""
 
 APP_DISPLAY_NAME = "M.B.S Studio"
 """The display name shown in window titles and UI elements."""
