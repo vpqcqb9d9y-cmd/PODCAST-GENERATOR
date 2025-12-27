@@ -45,6 +45,36 @@ def _default_metadata() -> Dict:
     }
 
 
+def _condense_text(text: str, target_chars: int = 24000) -> str:
+    """
+    Condense very long transcripts to a representative chunk for seeding.
+
+    Strategy:
+    - Gather paragraphs until reaching ~target_chars.
+    - If still over, append tail paragraphs to retain context from the end.
+    """
+    if len(text) <= target_chars:
+        return text
+
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    head: List[str] = []
+    total = 0
+    for p in paragraphs:
+        if total + len(p) > target_chars:
+            break
+        head.append(p)
+        total += len(p) + 2  # account for spacing
+
+    remaining = paragraphs[len(head) :]
+    tail: List[str] = []
+    while remaining and (total + len(remaining[-1]) + 2) <= target_chars * 1.1:
+        tail.insert(0, remaining.pop())  # take from the end
+        total += len(tail[0]) + 2
+
+    condensed = "\n\n".join(head + tail)
+    return condensed[: target_chars * 2]  # hard cap to avoid runaway size
+
+
 def _default_visual_metadata() -> Dict:
     """Default structure for visual metadata."""
     return {
@@ -243,22 +273,24 @@ class MetadataChatSession:
         if not force and not self._metadata_needs_seed():
             return {}
 
-        snippet = text[:6000]
+        condensed = _condense_text(text, target_chars=24000)
+        is_truncated = len(condensed) < len(text)
         if self._target_language() == "en":
             instruction = (
-                "Based on the following transcript, return JSON with fields: topic, summary, key_concepts, labs, "
-                "references, reading_list, and call_to_action. Include a friendly English reply in the 'assistant' "
-                "field that explains next steps. If information is missing, suggest follow-up questions.\n\n"
+                "Based on the transcript, return JSON with fields: topic, summary, key_concepts, labs, "
+                "references, reading_list, and call_to_action. Include a friendly English reply in 'assistant' "
+                "with next steps. If info is missing, ask follow-up questions. Provide a concise summary and actionable bullets.\n\n"
             )
             label = "Transcript"
         else:
             instruction = (
                 "על בסיס התמלול הבא, בנה JSON מובנה עם שדות topic, summary, key_concepts, labs, "
                 "references, reading_list ו-call_to_action. כלול גם מענה ידידותי בעברית בשדה assistant שמסביר "
-                "כיצד כדאי להמשיך. אם חסר מידע, הצע שאלות המשך.\n\n"
+                "כיצד כדאי להמשיך. אם חסר מידע, הצע שאלות המשך. ספק תקציר עם בולטים מעשיים.\n\n"
             )
             label = "תמלול"
-        prompt = f"{self._metadata_prompt_prefix()}\n\n{instruction}{label}:\n{snippet}"
+        note = "\n\n[NOTE: transcript was truncated for seeding]" if is_truncated else ""
+        prompt = f"{self._metadata_prompt_prefix()}\n\n{instruction}{label}:\n{condensed}{note}"
         model_choice = self._pick_model("gemini")
         assistant_text, metadata_patch = self._invoke_model(model_choice, prompt)
         if metadata_patch:

@@ -2175,6 +2175,20 @@ class PodcastGeneratorWindow(QMainWindow):
         else:
             self.chat_session.attach_transcript(None, "")
 
+    def _prepare_seed_text(self, path: Path) -> tuple[str, bool]:
+        """
+        Read a larger chunk for metadata seeding (up to ~120K chars) and flag truncation.
+        """
+        seed_limit = 120000
+        text = self._read_transcript_snippet(path, limit=seed_limit)
+        truncated = len(text) >= seed_limit
+        try:
+            if path.stat().st_size > seed_limit:
+                truncated = True
+        except Exception:
+            pass
+        return text, truncated
+
     def _handle_transcript_changed(self) -> None:
         self._update_onboarding_tip()
         path_text = self.transcript_edit.text().strip()
@@ -2242,9 +2256,9 @@ class PodcastGeneratorWindow(QMainWindow):
 
         if not self._should_auto_seed():
             return
-        snippet = self._read_transcript_snippet(resolved_path)
+        snippet, truncated = self._prepare_seed_text(resolved_path)
         if snippet:
-            self._start_transcript_seed(snippet)
+            self._start_transcript_seed(snippet, truncated)
 
     def _read_transcript_snippet(self, path: Path, limit: int = 16000) -> str:
         try:
@@ -2255,7 +2269,7 @@ class PodcastGeneratorWindow(QMainWindow):
             self._append_log(f"[Seed] לא ניתן לקרוא את התמלול ({path}): {exc}")
             return ""
 
-    def _start_transcript_seed(self, transcript_text: str) -> None:
+    def _start_transcript_seed(self, transcript_text: str, truncated: bool = False) -> None:
         if not transcript_text.strip():
             return
         if self.seed_worker and self.seed_worker.isRunning():
@@ -2267,6 +2281,8 @@ class PodcastGeneratorWindow(QMainWindow):
         self.seed_worker.error.connect(self._handle_seed_error)
         self.seed_worker.finished.connect(self._seed_finished)
         self.seed_worker.start()
+        if truncated:
+            self._append_log("[Seed] התמלול קוצר ל-120K תווים עבור זריעת מטא-דאטה (כל הקובץ ייקרא בפייפליין).")
 
     def _handle_seed_result(self, payload: object) -> None:
         if not isinstance(payload, dict):
