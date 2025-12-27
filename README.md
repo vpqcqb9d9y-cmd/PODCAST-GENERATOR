@@ -171,6 +171,18 @@ This contract is persisted in `metadata.json` and `quality_report.json` for vali
 - **BiDi visual check**: Test string “שלום! ברוכים הבאים ל-Microsoft 365, זה עובד?” is used for quick visual verification (sample clip can be rendered to `outputs/tests/rtl_bidi_test.mp4`).
 - **User guides (EN/HE)**: See `docs/USER_GUIDE.md` and `docs/USER_GUIDE.he.md` for a full walkthrough of panels, buttons, and pipeline switches.
 
+## AI Quality Enhancement (Azure/Gemini)
+- Purpose: analyze `quality_report.json` after a run, suggest improvements, and (optionally) auto-fix safe items.
+- Enable/disable via `.env`:
+  - `ENABLE_AI_QUALITY_ENHANCEMENT=true`
+  - `AUTO_APPLY_AI_FIXES=false` (set `true` only if you want auto-fixes when implemented)
+- Script for existing outputs:  
+  ```bash
+  python -m scripts.test_ai_enhancement "outputs/<run_dir>"
+  ```
+  Saves `enhancement_plan.json` next to the run. If AI is unavailable, a fallback plan is generated from the existing quality report.
+- Providers: Azure OpenAI (preferred, uses `openai_deployment`), fallback to Gemini if `GEMINI_API_KEY` is set.
+
 ## Installation
 1. **Prerequisites**
    - Python 3.9+
