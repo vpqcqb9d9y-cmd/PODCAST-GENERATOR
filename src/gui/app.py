@@ -2155,9 +2155,23 @@ class PodcastGeneratorWindow(QMainWindow):
             except OSError:
                 absolute_path = path
             # Provide a larger snippet for live chat so summaries reflect most of the transcript.
-            snippet = self._read_transcript_snippet(absolute_path, limit=48000)
+            snippet_limit = 48000
+            snippet = self._read_transcript_snippet(absolute_path, limit=snippet_limit)
+            truncated = len(snippet) >= snippet_limit
+            try:
+                # Compare file size to heuristic character budget to signal truncation.
+                if absolute_path.stat().st_size > snippet_limit:
+                    truncated = True
+            except Exception:
+                pass
             self.chat_session.attach_transcript(absolute_path, snippet)
             self.logger.debug("[Transcript] Synced to session: %s", absolute_path)
+            if truncated:
+                notice = (
+                    f"[Transcript] התמלול ארוך (>{snippet_limit} תווים). "
+                    "הצ'אט רואה קטע ראשון בלבד; הפייפליין עצמו יקרא את הקובץ המלא."
+                )
+                self._append_log(notice)
         else:
             self.chat_session.attach_transcript(None, "")
 
