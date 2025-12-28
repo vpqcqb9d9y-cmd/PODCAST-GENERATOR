@@ -26,8 +26,8 @@ from moviepy.editor import (
 )
 from moviepy.video.tools.subtitles import SubtitlesClip
 from ..utils import RunPaths, Settings, get_logger
-from .subtitle_generator import generate_srt_from_dialogue
-from ..utils.text_utils import shape_rtl
+from .subtitle_generator import generate_srt_from_dialogue, wrap_caption_text
+from ..utils.text_utils import shape_rtl, srt_text, render_text, wrap_logical_text
 
 
 T = TypeVar("T")
@@ -41,35 +41,119 @@ class VideoComposer:
     IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
     VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
     MIN_IMAGE_DURATION = 2.0
+    SAFE_BG = (12, 12, 12)  # Neutral dark gray to avoid blue screens
+    SAFE_FG = (235, 235, 235)
 
     def __post_init__(self) -> None:
         self.logger = get_logger(self.__class__.__name__)
 
+    # ---------- Debug + safety helpers ----------
+    def _log_clip_state(
+        self,
+        clip: VideoClip,
+        label: str,
+        path: Optional[Path] = None,
+        stage: str = "pre",
+    ) -> None:
+        try:
+            size = (getattr(clip, "w", None), getattr(clip, "h", None))
+            duration = getattr(clip, "duration", None)
+            fps = getattr(clip, "fps", None) or getattr(getattr(clip, "reader", None), "fps", None)
+            has_alpha = bool(getattr(clip, "mask", None))
+            exists = path.exists() if path else None
+            self.logger.debug(
+                "[Clip %s] %s | path=%s exists=%s size=%s duration=%.3f fps=%s alpha=%s type=%s",
+                stage,
+                label,
+                path.name if path else "n/a",
+                exists,
+                size,
+                float(duration or 0.0),
+                fps,
+                has_alpha,
+                clip.__class__.__name__,
+            )
+        except Exception as exc:
+            self.logger.debug("[Clip %s] %s | state logging failed: %s", stage, label, exc)
+
+    def _ensure_fps(self, clip: VideoClip, fps: int = 30) -> VideoClip:
+        try:
+            if getattr(clip, "fps", None) and abs(getattr(clip, "fps") - fps) < 0.01:
+                return clip
+            if hasattr(clip, "set_fps"):
+                return clip.set_fps(fps)
+        except Exception:
+            pass
+        return clip
+
+    def _normalize_clip(
+        self,
+        clip: VideoClip,
+        label: str,
+        path: Optional[Path] = None,
+        duration: Optional[float] = None,
+        target_size: tuple[int, int] = (1920, 1080),
+    ) -> VideoClip:
+        self._log_clip_state(clip, label, path, stage="pre-norm")
+        try:
+            clip = self._fit_clip_to_frame(clip, target_size)
+        except Exception as exc:
+            self.logger.debug("Fit-to-frame failed for %s: %s", label, exc)
+        if duration is not None:
+            clip = self._apply_duration(clip, max(0.01, duration))
+        clip = self._ensure_fps(clip, 30)
+        self._log_clip_state(clip, label, path, stage="post-norm")
+        return clip
+
+    def _safe_placeholder_clip(self, duration: float, text: str = "Missing asset") -> VideoClip:
+        """
+        Neutral placeholder (dark gray) to avoid accidental blue/green frames.
+        """
+        width, height = 1920, 1080
+        try:
+            canvas = Image.new("RGB", (width, height), color=self.SAFE_BG)
+            draw = ImageDraw.Draw(canvas)
+            font = ImageFont.load_default()
+            msg = shape_rtl(text)
+            tw, th = draw.textsize(msg, font=font)
+            draw.text(((width - tw) / 2, (height - th) / 2), msg, font=font, fill=self.SAFE_FG)
+            clip = ImageClip(np.array(canvas))
+        except Exception:
+            clip = ColorClip(size=(width, height), color=self.SAFE_BG)
+        clip = self._apply_duration(clip, max(0.01, duration))
+        clip = self._ensure_fps(clip, 30)
+        self._log_clip_state(clip, "safe-placeholder", stage="post-norm")
+        return clip
+
     def apply_ken_burns(self, clip: VideoClip, zoom_factor: float = 1.05) -> VideoClip:
         """
-        Apply a slow Ken Burns pan/zoom (~5%) to a static clip with subtle drift.
+        Apply a gentle Ken Burns zoom compatible with MoviePy 2.0 (no callable centers).
+        Falls back gracefully if resizing/cropping fails.
         """
         duration = max(getattr(clip, "duration", 0.0) or 0.0, 0.001)
+        target_w = getattr(clip, "w", 1920)
+        target_h = getattr(clip, "h", 1080)
 
-        def _scale(t: float) -> float:
-            return 1.0 + (zoom_factor - 1.0) * (t / duration)
+        try:
+            zoomed = clip.fx(vfx.resize, zoom_factor)
+            # Static drift to avoid crop() expecting numeric centers in MoviePy 2.0
+            x_drift = random.uniform(-0.04, 0.04) * target_w
+            y_drift = random.uniform(-0.04, 0.04) * target_h
+            center_x = (getattr(zoomed, "w", target_w) or target_w) / 2 + x_drift
+            center_y = (getattr(zoomed, "h", target_h) or target_h) / 2 + y_drift
 
-        # Randomize drift direction slightly to keep shots feeling alive
-        x_drift = random.uniform(-0.04, 0.04) * clip.w
-        y_drift = random.uniform(-0.04, 0.04) * clip.h
-        start_x = clip.w / 2
-        start_y = clip.h / 2
-        end_x = start_x + x_drift
-        end_y = start_y + y_drift
-
-        zoomed = clip.fx(vfx.resize, _scale)
-        return zoomed.fx(
-            vfx.crop,
-            width=clip.w,
-            height=clip.h,
-            x_center=lambda t: start_x + (end_x - start_x) * (t / duration),
-            y_center=lambda t: start_y + (end_y - start_y) * (t / duration),
-        )
+            cropped = zoomed.fx(
+                vfx.crop,
+                width=target_w,
+                height=target_h,
+                x_center=float(center_x),
+                y_center=float(center_y),
+            )
+            cropped = self._ensure_fps(cropped, getattr(clip, "fps", 30) or 30)
+            return cropped
+        except Exception as exc:
+            self.logger.warning("Ken Burns disabled for clip (%s): %s", getattr(clip, "__class__", type(clip)).__name__, exc)
+            return clip
 
     def _load_cv2(self):
         try:
@@ -243,6 +327,11 @@ class VideoComposer:
                 len(valid_images),
                 placeholders_needed,
             )
+            self.logger.info(
+                "[Placeholder] Generating %d placeholder slide(s) because only %d valid images passed validation.",
+                placeholders_needed,
+                len(valid_images),
+            )
             placeholders = self._create_placeholder_slides(
                 count=placeholders_needed,
                 output_dir=image_dir,
@@ -255,6 +344,7 @@ class VideoComposer:
                 "Only %d valid image(s) available; placeholders disabled (adaptive timeline).",
                 len(valid_images),
             )
+            self.logger.info("[Placeholder] Placeholders disabled; timeline will stretch available visuals only.")
 
         return valid_images[:required_count]
 
@@ -317,6 +407,26 @@ class VideoComposer:
         if hasattr(clip, "with_start"):
             return clip.with_start(start)
         return clip.set_start(start)
+
+    @staticmethod
+    def _fit_clip_to_frame(clip: VideoClip, target_size: tuple[int, int] = (1920, 1080)) -> VideoClip:
+        """
+        Scale and center a clip to fit inside the target frame without leaving it tiny/off-frame.
+        """
+        try:
+            target_w, target_h = target_size
+            scale = max(target_w / max(getattr(clip, "w", target_w), 1e-3), target_h / max(getattr(clip, "h", target_h), 1e-3))
+            resized = clip.fx(vfx.resize, scale)
+            centered = resized.fx(
+                vfx.crop,
+                width=target_w,
+                height=target_h,
+                x_center=getattr(resized, "w", target_w) / 2,
+                y_center=getattr(resized, "h", target_h) / 2,
+            )
+            return centered.set_position("center")
+        except Exception:
+            return clip
 
     @staticmethod
     def _extract_asset_index(path: Path) -> Optional[int]:
@@ -396,6 +506,11 @@ class VideoComposer:
 
         if asset_paths is not None:
             existing = [p for p in asset_paths if p and p.exists()]
+            # Prefer assets generated in the current run directory
+            existing = sorted(
+                set(existing),
+                key=lambda p: 0 if animations_dir in p.parents else 1,
+            )
             video_files = sorted({p for p in existing if p.suffix.lower() in self.VIDEO_EXTENSIONS})
             prioritized_images = sorted({p for p in existing if p.suffix.lower() in self.IMAGE_EXTENSIONS})
             raw_image_files = list(prioritized_images)
@@ -617,8 +732,13 @@ class VideoComposer:
             img_array = np.array(bg)
             clip = ImageClip(img_array)
             clip = self._apply_duration(clip, duration)
+            clip = self._ensure_fps(clip, 30)
+            clip = self._normalize_clip(clip, f"image:{path.name}", path=path, duration=duration)
             if apply_ken_burns:
-                clip = self.apply_ken_burns(clip)
+                try:
+                    clip = self.apply_ken_burns(clip)
+                except Exception as kb_exc:
+                    self.logger.warning("Ken Burns skipped for %s: %s", path.name, kb_exc)
             return clip
 
         for asset_type, media in ordered_assets:
@@ -629,6 +749,8 @@ class VideoComposer:
             try:
                 if asset_type == "video":
                     fg_clip = VideoFileClip(str(media), has_mask=True)
+                    self._log_clip_state(fg_clip, f"video:{media.name}", media, stage="loaded")
+                    fg_clip = self._normalize_clip(fg_clip, f"video:{media.name}", path=media)
                     duration = getattr(fg_clip, "duration", 0.0) or 0.0
                     if duration <= 0:
                         self.logger.warning("Video %s has zero duration; skipping.", media.name)
@@ -639,26 +761,35 @@ class VideoComposer:
                         fg_clip = fg_clip.subclipped(0, duration)
 
                     bg_path: Optional[Path] = None
+                    # Use next available image as background, but don't consume it if we're reusing the last one
                     if image_idx < len(image_files):
                         bg_path = image_files[image_idx]
-                        image_idx += 1
+                        # Only advance index if we're not at the last image (to allow reuse)
+                        if image_idx < len(image_files) - 1:
+                            image_idx += 1
                     elif image_files:
+                        # Reuse last image if we've exhausted the list
                         bg_path = image_files[-1]
 
-                    if bg_path:
+                    if bg_path and bg_path.exists():
                         try:
                             bg_clip = _build_image_clip(bg_path, duration)
+                            self.logger.debug("Using image %s as background for video %s", bg_path.name, media.name)
                         except Exception as img_err:
                             self.logger.warning("Background image failed (%s): %s", bg_path.name, img_err, exc_info=True)
-                            bg_clip = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=duration)
+                            bg_clip = ColorClip(size=(1920, 1080), color=self.SAFE_BG, duration=duration)
+                            bg_clip = self._ensure_fps(bg_clip, 30)
                     else:
-                        bg_clip = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=duration)
+                        bg_clip = ColorClip(size=(1920, 1080), color=self.SAFE_BG, duration=duration)
+                        bg_clip = self._ensure_fps(bg_clip, 30)
 
                     fg_clip = self._apply_start(fg_clip, 0)
                     bg_clip = self._apply_start(bg_clip, 0)
+                    # Ensure background is bottom, foreground on top
                     composite = CompositeVideoClip([bg_clip, fg_clip], size=(1920, 1080))
                     composite = self._apply_duration(composite, duration)
                     composite = self._apply_start(composite, current_start)
+                    self._log_clip_state(composite, f"composite:{media.name}", media, stage="selected")
                     self.logger.info("Added composited video %s over background (%.2fs)", media.name, duration)
                     clip = composite
                 else:
@@ -674,6 +805,7 @@ class VideoComposer:
                     try:
                         clip = _build_image_clip(media, duration)
                         clip = self._apply_start(clip, current_start)
+                        self._log_clip_state(clip, f"image:{media.name}", media, stage="selected")
                         self.logger.info(
                             "Added image clip %s (%.2fs)", media.name, duration
                         )
@@ -699,15 +831,18 @@ class VideoComposer:
                             try:
                                 clip = ImageClip(str(placeholder))
                                 clip = self._apply_duration(clip, duration)
+                                clip = self._ensure_fps(clip, 30)
+                                clip = self._normalize_clip(clip, f"ph-image:{placeholder.name}", path=placeholder, duration=duration)
                                 if apply_ken_burns:
                                     clip = self.apply_ken_burns(clip)
                                 clip = self._apply_start(clip, current_start)
                             except Exception as ph_err:
-                                self.logger.error("Placeholder clip failed, reverting to color fill: %s", ph_err)
-                                clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=duration)
+                                self.logger.error("Placeholder clip failed, reverting to neutral fill: %s", ph_err)
+                                clip = self._safe_placeholder_clip(duration, "Missing asset")
                                 clip = self._apply_start(clip, current_start)
                         else:
-                            clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=duration)
+                            self.logger.info("[Placeholder] Using neutral placeholder because image processing failed.")
+                            clip = self._safe_placeholder_clip(duration, "Missing asset")
                             clip = self._apply_start(clip, current_start)
                 clips.append(clip)
                 if asset_type == "image":
@@ -715,6 +850,20 @@ class VideoComposer:
                     last_image_clip = clip
                     image_idx += 1
                 current_start += getattr(clip, "duration", 0.0) or 0.0
+                try:
+                    self.logger.info(
+                        "[Timeline] slot=%d type=%s path=%s start=%.2fs dur=%.2fs size=%s fps=%s placeholder=%s",
+                        len(clips) - 1,
+                        asset_type,
+                        media.name if isinstance(media, Path) else str(media),
+                        getattr(clip, "start", 0.0) or 0.0,
+                        getattr(clip, "duration", 0.0) or 0.0,
+                        (getattr(clip, "w", None), getattr(clip, "h", None)),
+                        getattr(clip, "fps", None) or getattr(getattr(clip, "reader", None), "fps", None),
+                        isinstance(clip, ColorClip),
+                    )
+                except Exception:
+                    pass
             except Exception as e:
                 self.logger.error("Failed to process asset %s: %s", media.name, e, exc_info=True)
                 continue
@@ -729,7 +878,9 @@ class VideoComposer:
                 last_clip = clips[-1]
                 clips[-1] = self._apply_duration(last_clip, getattr(last_clip, "duration", 0.0) + remaining)
             else:
-                tail = ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=remaining)
+                tail = ColorClip(size=(1920, 1080), color=self.SAFE_BG, duration=remaining)
+                tail = self._ensure_fps(tail, 30)
+                self._log_clip_state(tail, "tail-placeholder", stage="post-norm")
                 clips.append(tail)
         elif current_start > total_duration and clips:
             overflow = current_start - total_duration
@@ -780,13 +931,15 @@ class VideoComposer:
             if placeholder:
                 ph_clip = ImageClip(str(placeholder))
                 ph_clip = self._apply_duration(ph_clip, audio_duration or 1.0)
+                ph_clip = self._ensure_fps(ph_clip, 30)
                 try:
                     ph_clip = self.apply_ken_burns(ph_clip)
                 except Exception as kb_exc:
                     self.logger.warning("Ken Burns skipped for placeholder (primary): %s", kb_exc)
                 clip_list = [ph_clip]
             else:
-                ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
+                ph_clip = ColorClip(size=(1920, 1080), color=self.SAFE_BG, duration=audio_duration or 1.0)
+                ph_clip = self._ensure_fps(ph_clip, 30)
                 clip_list = [ph_clip]
         
         has_non_solid = any(not isinstance(c, ColorClip) for c in clip_list)
@@ -806,16 +959,34 @@ class VideoComposer:
             if placeholder:
                 ph_clip = ImageClip(str(placeholder))
                 ph_clip = self._apply_duration(ph_clip, audio_duration or clip_list[0].duration or 1.0)
+                ph_clip = self._ensure_fps(ph_clip, 30)
                 try:
                     ph_clip = self.apply_ken_burns(ph_clip)
                 except Exception as kb_exc:
                     self.logger.warning("Ken Burns skipped for placeholder (solid-only): %s", kb_exc)
                 clip_list = [ph_clip]
             else:
-                ph_clip = ColorClip(size=(1920, 1080), color=(30, 34, 64), duration=audio_duration or 1.0)
+                ph_clip = ColorClip(size=(1920, 1080), color=self.SAFE_BG, duration=audio_duration or 1.0)
+                ph_clip = self._ensure_fps(ph_clip, 30)
                 clip_list = [ph_clip]
 
         # Concatenate video clips
+        # Log clip ordering before compose
+        try:
+            order_debug = [
+                {
+                    "idx": i,
+                    "type": clip.__class__.__name__,
+                    "start": getattr(clip, "start", 0),
+                    "duration": getattr(clip, "duration", 0),
+                    "size": (getattr(clip, "w", None), getattr(clip, "h", None)),
+                }
+                for i, clip in enumerate(clip_list)
+            ]
+            self.logger.info("Clip order (bottom->top per slot): %s", order_debug)
+        except Exception:
+            pass
+
         base = concatenate_videoclips(clip_list, method="compose")
         video_duration = base.duration
         self.logger.info("Video duration before sync: %.2f seconds", video_duration)
@@ -926,17 +1097,29 @@ class VideoComposer:
                 from .subtitle_generator import fix_rtl_text
 
                 def _text_factory(txt: str) -> TextClip:
-                    bidi_text = txt if target_language.startswith("en") else fix_rtl_text(txt)
+                    logical = srt_text(txt)
+                    lines = wrap_logical_text(logical, max_chars_per_line=42)
+                    use_rtl = not target_language.startswith("en")
+                    display_lines = [render_text(line) if use_rtl else line for line in lines]
+                    display_text = "\n".join(display_lines)
+                    max_width = int(final.w * 0.83)
+                    wrapped_text, applied_size = wrap_caption_text(
+                        display_text,
+                        max_width_px=max_width,
+                        max_lines=2,
+                        font_size=45,
+                    )
+                    # Use method="label" for proper background rendering in MoviePy 2.0
                     return TextClip(
-                        bidi_text,
-                        fontsize=45,
+                        wrapped_text,
+                        fontsize=applied_size,
                         font="Arial",
                         color="white",
-                        bg_color="rgba(0,0,0,0.55)",
+                        bg_color="black",
                         stroke_color="black",
                         stroke_width=2,
-                        method="caption",
-                        size=(int(final.w * 0.9), None),
+                        method="label",
+                        size=(max_width, None),
                         align="center",
                     )
 
@@ -956,7 +1139,7 @@ class VideoComposer:
                         if "-->" not in ts_line:
                             continue
                         start_str, end_str = [part.strip() for part in ts_line.split("-->", 1)]
-                        text = " ".join(lines[2:]).strip()
+                        text = "\n".join(lines[2:]).strip()
                         subtitle_entries.append((( _parse_ts(start_str), _parse_ts(end_str) ), text))
                 except Exception as parse_exc:
                     self.logger.error("Failed to parse captions for MoviePy fallback: %s", parse_exc)
@@ -1068,6 +1251,14 @@ class VideoComposer:
                 target_language=target_language,
             )
             self.logger.info("captions.srt written with %d entries", len(turns))
+            try:
+                srt_content = output_path.read_text(encoding="utf-8")
+                if "םולש" in srt_content and "שלום" not in srt_content:
+                    self.logger.warning("SRT regression check: found reversed 'שלום' without logical order.")
+                elif "שלום" in srt_content:
+                    self.logger.debug("SRT regression check: found logical 'שלום' substring.")
+            except Exception:
+                self.logger.debug("Skipped SRT regression check (read error).")
         except Exception as exc:
             self.logger.error("Failed to generate SRT: %s", exc)
 
